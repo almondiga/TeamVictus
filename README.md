@@ -108,6 +108,31 @@ El repo incluye `render.yaml` (Blueprint) y un `Dockerfile`.
 **Verificación:** en la pestaña *Logs* del servicio deberías ver
 `✅ Comandos slash sincronizados` y `⚓ <bot> conectado a N servidor(es)`.
 
+## Despliegue en livemy.app (o cualquier host con Procfile)
+
+El repo incluye `Procfile` (`web: python bot.py`), `runtime.txt` (python-3.12) y un
+endpoint `/health` en el puerto `$PORT` (8080 por defecto) para health-checks y
+keep-alive.
+
+> ⚠️ **Estado real del plan Free de livemy.app (según su propio tutorial, ago 2026):**
+> la app solo está **viva 24 h por despliegue** y luego se apaga (código y datos se
+> guardan 30 días) — **no es 24/7**. Para el bot corriendo de forma continua hacen falta
+> sus planes de pago (Maker, ~10 $/mes). Su blog de julio 2026 decía "free sin dormir",
+> pero su documentación más reciente lo contradice: valida tú mismo el plan actual en
+> su web antes de decidir.
+
+**Pasos (el plan free sirve como prueba de 24 h):**
+1. El repo está en GitHub y es público.
+2. [livemy.app](https://livemy.app) → **New project → Connect repo** → autoriza la app de GitHub y elige TeamVictus.
+3. **Project Settings → Environment Variables**: `DISCORD_TOKEN`, `BERRYWALLET_API_KEY`, `RAPIDAPI_KEY`, `OPTCG_API_KEY`.
+4. **Deploy** → en 2-4 min verás en los logs `✅ Comandos slash sincronizados` y `⚓ <bot> conectado a N servidor(es)`.
+5. Health check: `https://tu-app.livemy.site/health` → `{"status": "ok", ...}`.
+
+**Persistencia de la BD:** en el plan free la app se apaga a las 24 h (los datos se
+conservan 30 días); en planes de pago, verifica en su dashboard si los archivos
+persisten entre despliegues. Antes de cada despliegue/reinicio, saca un backup con
+`/exportar` en Discord y reponlo con `/importar` si hiciera falta.
+
 ## Sobre la sincronización con la app OP.TCG
 
 La app **OP.TCG no tiene API pública** y extraer la suya por ingeniería inversa viola

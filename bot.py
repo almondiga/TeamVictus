@@ -3,8 +3,15 @@
 Ejecutar:  python bot.py
 Los comandos (slash) se registran de forma global, por lo que el bot funciona en
 todos los servidores a los que se invite.
+
+Además expone un endpoint HTTP /health (puerto $PORT o 8080) para que sea compatible
+con hosts tipo web (Render free + UptimeRobot, livemy.app, etc.) y poder monitorizar
+que el proceso está vivo.
 """
+import os
+
 import discord
+from aiohttp import web
 from discord.ext import commands
 
 import config
@@ -17,6 +24,7 @@ class OPCGBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self) -> None:
+        self.loop.create_task(self._health_server())
         await self.load_extension("cogs.search")
         await self.load_extension("cogs.loans")
         await self.load_extension("cogs.listing")
@@ -27,6 +35,29 @@ class OPCGBot(commands.Bot):
             print("✅ Comandos slash sincronizados (globales).")
         except Exception as exc:
             print(f"⚠️ No se pudieron sincronizar los comandos: {exc}")
+
+    async def _health_server(self) -> None:
+        """Mini servidor HTTP para health-checks de la plataforma de hosting."""
+        app = web.Application()
+
+        async def health(request: web.Request) -> web.Response:
+            return web.json_response({
+                "status": "ok",
+                "bot": str(self.user) if self.user else "conectando",
+                "guilds": len(self.guilds),
+            })
+
+        async def index(request: web.Request) -> web.Response:
+            return web.Response(text="OP TCG Discord Bot online ⚓")
+
+        app.router.add_get("/health", health)
+        app.router.add_get("/", index)
+        port = int(os.getenv("PORT", "8080"))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        print(f"🩺 Health endpoint activo en :{port}/health")
 
     async def on_ready(self) -> None:
         print(f"⚓ {self.user} conectado a {len(self.guilds)} servidor(es).")
