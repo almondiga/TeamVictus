@@ -1,0 +1,33 @@
+# Render Blueprint para el bot de Discord OP TCG
+#
+# Uso: dashboard.render.com → New + → Blueprint → selecciona el repo (TeamVictus).
+#
+# ⚠️ IMPORTANTE (estado Render 2026):
+#  - El plan FREE se duerme a los 15 min sin tráfico entrante; un bot de Discord
+#    solo habla hacia afuera, así que se desconectaría. Para 24/7 real: plan de pago.
+#  - El filesystem de Render es EFÍMERO: sin disco persistente, la base de datos
+#    (préstamos/colecciones) se pierde en cada despliegue/restart.
+#  - Para persistir: plan de pago + disco montado en /data + DB_PATH=/data/optcg_bot.db
+#    (descomenta las líneas del final; el disco se crea en el dashboard, pestaña Disks).
+services:
+  - type: worker
+    name: optcg-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    autoDeploy: true
+    envVars:
+      # Secretos: se rellenan a mano en el dashboard (sync: false = nunca en el repo)
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: BERRYWALLET_API_KEY
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: OPTCG_API_KEY
+        sync: false
+      - key: PRICE_PROVIDER
+        value: auto
+      # ---- Persistencia SQLite (plan de pago + disco en /data) ----
+      # - key: DB_PATH
+      #   value: /data/optcg_bot.db

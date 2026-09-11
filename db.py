@@ -3,6 +3,7 @@
 Los datos están aislados por servidor (guild_id) y por usuario (owner_id),
 lo que permite que el bot funcione en varios servidores sin mezclar nada.
 """
+import os
 import sqlite3
 
 import config
@@ -13,6 +14,8 @@ _conn: sqlite3.Connection | None = None
 def get_conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
+        # Asegura que el directorio de la BD existe (p. ej. /data en Render)
+        os.makedirs(os.path.dirname(os.path.abspath(config.DB_PATH)), exist_ok=True)
         _conn = sqlite3.connect(config.DB_PATH)
         _conn.row_factory = sqlite3.Row
         init_db()

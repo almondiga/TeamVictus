@@ -82,6 +82,32 @@ en `OPTCG_API_URL`.
 Sin clave, el bot **no se rompe**: `/buscar` y `/precio` funcionan con fallback por
 nombre vía Cardmarket, y `/listado` avisa de que necesita la clave.
 
+## Despliegue en Render (24/7)
+
+El repo incluye `render.yaml` (Blueprint) y un `Dockerfile`.
+
+> ⚠️ **Aviso importante sobre el plan free de Render (2026):** los servicios free se
+> duermen a los 15 minutos sin tráfico entrante, y un bot de Discord solo habla hacia
+> afuera — así que en el plan free el bot **se desconectaría**. Para que corra 24/7 de
+> verdad necesitas un **plan de pago** (Starter, ~7 €/mes). Además, el filesystem de
+> Render es **efímero**: sin disco persistente, tu base de datos de
+> préstamos/colecciones se borra en cada despliegue o reinicio.
+
+**Opción A — Blueprint (recomendada):**
+1. El repo ya está en GitHub (TeamVictus).
+2. En [dashboard.render.com](https://dashboard.render.com) → **New + → Blueprint** → conecta el repo.
+3. Render crea el worker `optcg-bot`. Rellena en el dashboard las variables secretas:
+   `DISCORD_TOKEN`, `BERRYWALLET_API_KEY`, `RAPIDAPI_KEY`, `OPTCG_API_KEY`.
+4. **Para persistir los datos:** sube el servicio a plan de pago, crea un **disco
+   persistente** montado en `/data` (pestaña *Disks*) y define `DB_PATH=/data/optcg_bot.db`.
+5. **Deploy** → en unos minutos el bot se conecta.
+
+**Opción B — Manual:** *New + → Web Service* → elige el repo → *Environment: Python* →
+*Build: `pip install -r requirements.txt`* → *Start: `python bot.py`* → plan de pago y disco igual que arriba.
+
+**Verificación:** en la pestaña *Logs* del servicio deberías ver
+`✅ Comandos slash sincronizados` y `⚓ <bot> conectado a N servidor(es)`.
+
 ## Sobre la sincronización con la app OP.TCG
 
 La app **OP.TCG no tiene API pública** y extraer la suya por ingeniería inversa viola
