@@ -149,6 +149,8 @@ check("rapidapi low", res_rapi.low == 2.0)
 
 # fábrica sin ninguna clave -> error claro
 config.PRICE_PROVIDER = "auto"
+config.BERRYWALLET_API_KEY = ""
+config.RAPIDAPI_KEY = ""
 prov, err = prices.build_price_provider()
 check("factory sin claves -> (None, error)", prov is None and err and "BERRYWALLET" in err, err)
 
@@ -156,6 +158,21 @@ check("factory sin claves -> (None, error)", prov is None and err and "BERRYWALL
 sess_bw.calls.clear()
 prov_bw.get_prices("Roronoa Zoro", "OP01-001")
 check("cache evita segunda llamada", len(sess_bw.calls) == 0)
+
+# _elegir_con_precios: el primer resultado coincide por código pero sin precios
+# -> debe saltar a otra variante del mismo código que sí tenga cardmarket
+items_mixtos = [
+    {"card_number": "OP01-001", "name": "Roronoa Zoro (Alternate Art)", "cardmarket": None},
+    {"card_number": "OP01-001", "name": "Roronoa Zoro", "cardmarket": None},
+    {"card_number": "OP01-001", "name": "Roronoa Zoro (001)", "sub_type_name": "Normal",
+     "cardmarket": {"prices": {"trend": 2.5, "avg": 2.6, "low": 0.8}}},
+]
+elegido = prices._elegir_con_precios(items_mixtos, "OP01-001", "Roronoa Zoro")
+check("elegir_con_precios salta a variante con precios",
+      elegido and elegido["cardmarket"]["prices"]["trend"] == 2.5)
+check("elegir_con_precios sin datos devuelve el mejor igualmente",
+      prices._elegir_con_precios([{"card_number": "OP01-001", "name": "X",
+                                   "cardmarket": None}], "OP01-001", "X") is not None)
 
 print()
 if fallos:

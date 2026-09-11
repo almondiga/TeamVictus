@@ -80,6 +80,30 @@ def _elegir_mejor(items: list[dict], card_code: str | None, card_name: str) -> d
     return items[0]
 
 
+def _elegir_con_precios(items: list[dict], card_code: str | None, card_name: str) -> dict | None:
+    """Como _elegir_mejor, pero prefiere resultados que tengan precios de Cardmarket.
+
+    Muchos resultados (variantes alt-art, foil, promos) traen cardmarket: null; con
+    este helper el bot salta a la variante Normal del mismo código que sí tiene datos.
+    """
+    best = _elegir_mejor(items, card_code, card_name)
+    if best and (best.get("cardmarket") or {}).get("prices"):
+        return best
+    candidatos: list[dict] = []
+    if card_code:
+        code = card_code.upper().replace("-", "").replace(" ", "")
+        candidatos = [it for it in items
+                      if (it.get("card_number") or "").upper().replace("-", "").replace(" ", "") == code]
+    else:
+        candidatos = items
+    # prioriza la variante Normal, luego cualquier otra con precios
+    for it in sorted(candidatos,
+                     key=lambda x: 0 if (x.get("sub_type_name") or "").lower() == "normal" else 1):
+        if (it.get("cardmarket") or {}).get("prices"):
+            return it
+    return best
+
+
 class _TTLCache:
     def __init__(self, ttl: int) -> None:
         self.ttl = ttl
@@ -130,7 +154,7 @@ class BerryWalletProvider(PriceProvider):
         resp.raise_for_status()
         data = resp.json()
         items = data.get("data") or data.get("results") or []
-        best = _elegir_mejor(items, card_code, card_name)
+        best = _elegir_con_precios(items, card_code, card_name)
         result: PriceResult | None = None
         if best:
             cm = best.get("cardmarket") or {}
