@@ -20,7 +20,8 @@ import config
 class OPCGBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
-        intents.message_content = True
+        # Nota: todos los comandos son slash; no se usa message_content
+        # (es un intent privilegiado y evita tocar el Developer Portal).
         super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self) -> None:
