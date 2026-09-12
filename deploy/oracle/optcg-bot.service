@@ -1,0 +1,18 @@
+# Servicio systemd para el bot OPTCG (se genera automáticamente desde install_oracle.sh)
+[Unit]
+Description=OPTCG Discord Bot (TeamVictus)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/optcg-bot
+ExecStart=/opt/optcg-bot/venv/bin/python /opt/optcg-bot/bot.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/optcg-bot/.env
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

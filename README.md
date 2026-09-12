@@ -108,6 +108,23 @@ El repo incluye `render.yaml` (Blueprint) y un `Dockerfile`.
 **Verificación:** en la pestaña *Logs* del servicio deberías ver
 `✅ Comandos slash sincronizados` y `⚓ <bot> conectado a N servidor(es)`.
 
+## Despliegue en Oracle Cloud Always Free (gratis, 24/7) — recomendado
+
+Guía completa paso a paso (crear cuenta, VM, SSH, instalación con un comando,
+auto-reinicio con systemd, monitorización con UptimeRobot): **`deploy/oracle/README.md`**.
+
+Instalación en la VM (Ubuntu 24.04):
+
+```bash
+curl -sL https://raw.githubusercontent.com/almondiga/TeamVictus/main/deploy/oracle/install_oracle.sh -o install_oracle.sh
+chmod +x install_oracle.sh
+./install_oracle.sh
+```
+
+> El instalador clona el repo en `/opt/optcg-bot`, crea el venv, te pide las claves la
+> primera vez y deja el bot como servicio `systemd` con auto-reinicio
+> (`systemctl status optcg-bot` / `sudo journalctl -u optcg-bot -f`).
+
 ## Despliegue en livemy.app (o cualquier host con Procfile)
 
 El repo incluye `Procfile` (`web: python bot.py`), `runtime.txt` (python-3.12) y un
