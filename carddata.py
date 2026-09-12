@@ -14,6 +14,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 
 import requests
 
@@ -305,18 +306,27 @@ class CardDataLocal:
 
     def __init__(self, db_path: str | None = None) -> None:
         self.db = db_path or config.LOCAL_DB_PATH
-        self._conn = sqlite3.connect(self.db)
+        # los comandos corren en hilos del event loop (asyncio.to_thread):
+        # conexión compartida entre hilos + candado de serialización
+        self._conn = sqlite3.connect(self.db, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
         self._sets: dict[str, dict] = {}
         try:
-            for r in self._conn.execute("SELECT id, label, pack_id FROM sets"):
-                self._sets[r["id"]] = dict(r)
+            with self._lock:
+                for r in self._conn.execute("SELECT id, label, pack_id FROM sets"):
+                    self._sets[r["id"]] = dict(r)
         except sqlite3.Error:
             pass
 
+    def _execute(self, sql: str, params: tuple = ()):
+        with self._lock:
+            return self._conn.execute(sql, params)
+
     def close(self) -> None:
         try:
-            self._conn.close()
+            with self._lock:
+                self._conn.close()
         except sqlite3.Error:
             pass
 
@@ -351,12 +361,12 @@ class CardDataLocal:
     def resolve_card(self, text: str) -> dict | None:
         code = normalize_code(text)
         if code:
-            row = self._conn.execute(
+            row = self._execute(
                 "SELECT * FROM cards WHERE id = ?", (code.upper(),)).fetchone()
             if row:
                 return self._fila_a_carta(row)
             # paralelas (OP01-001_p1): devuelve la base si la piden por código
-            row = self._conn.execute(
+            row = self._execute(
                 "SELECT * FROM cards WHERE id LIKE ? ORDER BY parallel ASC, id LIMIT 1",
                 (code.upper() + "%",)).fetchone()
             if row:
@@ -366,7 +376,7 @@ class CardDataLocal:
             return None
         # tolera "Monkey D. Luffy" vs "Monkey.D.Luffy" (como los lista Bandai)
         nl = re.sub(r"[\s.]+", "", name.lower())
-        row = self._conn.execute(
+        row = self._execute(
             """SELECT * FROM cards
                WHERE name = ? COLLATE NOCASE
                   OR name LIKE ? COLLATE NOCASE
@@ -408,7 +418,7 @@ class CardDataLocal:
         where = (" WHERE " + " AND ".join(cond)) if cond else ""
         order_col = {"id": "id", "name": "name", "power": "power", "cost": "cost"}.get(sort, "id")
         direccion = "DESC" if order == "desc" else "ASC"
-        rows = self._conn.execute(
+        rows = self._execute(
             f"SELECT * FROM cards{where} ORDER BY {order_col} {direccion}, id ASC LIMIT ?",
             params + [page_size]).fetchall()
         return [self._fila_a_carta(r) for r in rows]
