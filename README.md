@@ -25,7 +25,8 @@ filtrables e imágenes en grande.
 - Python 3.10+
 - Cuenta de Discord y una aplicación creada en el [Developer Portal](https://discord.com/developers/applications)
 - Cuenta de Cardmarket (gratis) para los precios
-- (Recomendado) Clave de la API comunitaria de cartas [optcg-api](https://github.com/arjunkai/optcg-api)
+- (Opcional) Clave de la API comunitaria de cartas [optcg-api](https://github.com/arjunkai/optcg-api)
+- (Opcional, sin claves) Catálogo local de cartas generado con su scraper — ver abajo
 
 ## Puesta en marcha
 
@@ -72,15 +73,32 @@ cardmarket). El filtro fino *por idioma inglés* solo existe con la API oficial;
 proveedores dan el precio de mercado de Cardmarket en EUR. Sin ninguna clave, el bot
 sigue funcionando pero `/buscar` muestra la carta sin precios y explica qué falta.
 
-### 3. optcg-api (recomendado para /listado y filtros ricos)
-`/listado` (filtros por color, poder, rareza...) y la ficha completa de `/buscar` usan
-[optcg-api](https://github.com/arjunkai/optcg-api), un proyecto comunitario MIT. Su
-instancia pública está restringida: pide acceso **no comercial** abriendo un issue o
-escribiendo a su autor, o despliega tu propia instancia (el código es MIT) y pon la URL
-en `OPTCG_API_URL`.
+### 3. Datos de cartas: elige tu proveedor (todos funcionan sin clave de nadie)
 
-Sin clave, el bot **no se rompe**: `/buscar` y `/precio` funcionan con fallback por
-nombre vía Cardmarket, y `/listado` avisa de que necesita la clave.
+`/buscar` y `/listado` (filtros por set, nombre, color, categoría, rareza, poder,
+número...) necesitan un catálogo de cartas. Hay tres proveedores, por orden de
+preferencia automática:
+
+1. **Catálogo local (recomendado: sin claves, catálogo completo y sin red)** —
+   genera `optcg_cards.db` con el scraper oficial del proyecto optcg-api (MIT):
+
+   ```bash
+   # 1) Una vez: clona el proyecto y genera el catálogo (tarda ~10 min, Playwright)
+   git clone https://github.com/arjunkai/optcg-api.git
+   cd optcg-api && pip install playwright && python -m playwright install chromium
+   python scraper.py          # -> data/cards.json + data/sets.json
+   cd .. && python optcg-discord-bot/build_local_db.py
+   # 2) El bot detecta optcg_cards.db y lo usa automáticamente
+   ```
+
+   Repite `scraper.py` cuando salgan sets nuevos (reanuda donde se quedó).
+2. **optcg-api pública** — pide acceso no comercial (issue/email en
+   [optcg-api](https://github.com/arjunkai/optcg-api)) y pon `OPTCG_API_KEY`.
+   Añade variantes ricas (manga, serial, paralelas) y precios USD de TCGPlayer.
+3. **BerryWallet** (`BERRYWALLET_API_KEY`) — catálogo por búsqueda (sin listado
+   completo de un set; los precios EUR de Cardmarket los da igual este proveedor).
+
+Sin ningún proveedor el bot no se rompe: `/buscar` avisa de qué falta configurar.
 
 ## Despliegue en Render (24/7)
 
@@ -179,7 +197,7 @@ python test_smoke.py       # carga el bot y los 10 comandos sin conectar a Disco
 bot.py               -> entrada, registro de cogs y sincronización global de comandos
 config.py            -> lee el .env
 db.py                -> SQLite (préstamos y colecciones, aislados por servidor y usuario)
-carddata.py          -> datos de cartas: optcg-api (rico) + fallback Cardmarket
+carddata.py          -> datos de cartas: catálogo local (SQLite) / optcg-api / BerryWallet
 prices.py            -> proveedores de precios: BerryWallet / RapidAPI (España) / API oficial
 cardmarket.py        -> cliente de la API oficial de Cardmarket (OAuth1), usado por prices.py
 cogs/search.py       -> /buscar /precio
@@ -190,6 +208,6 @@ cogs/collection.py   -> /coleccion /importar /exportar /op-sync
 
 ## Fuentes de datos
 
-- **Cartas y campos** (color, poder, rareza, categoría, paralelas...): [optcg-api](https://github.com/arjunkai/optcg-api) (MIT; datos originados del sitio oficial de Bandai y TCGPlayer).
+- **Cartas y campos** (color, poder, rareza, categoría, paralelas...): catálogo local generado con el scraper de [optcg-api](https://github.com/arjunkai/optcg-api) (MIT; datos del sitio oficial de Bandai), o la propia optcg-api.
 - **Imágenes**: sitio oficial de Bandai (`en.onepiece-cardgame.com/images/cardlist/card/…`).
 - **Precios Cardmarket (EUR)**: [BerryWallet](https://www.pokewallet.io/berrywallet-docs) (free) o [CardMarket API TCG en RapidAPI](https://rapidapi.com/tcggopro/api/cardmarket-api-tcg) (free, con precio por país ES). La API oficial de Cardmarket está cerrada a nuevas altas.

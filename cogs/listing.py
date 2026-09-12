@@ -16,7 +16,8 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 import config
-from carddata import (COLORS, RARITIES, CATEGORIES, CardData, build_card_data)
+from carddata import (COLORS, RARITIES, CATEGORIES, CardData, CardDataBerry,
+                      CardDataLocal, build_card_data)
 
 _executor = ThreadPoolExecutor(max_workers=8)
 
@@ -67,10 +68,10 @@ class ListadoCog(commands.Cog):
                       ascendente: bool = True) -> None:
         await interaction.response.defer()
 
-        if not isinstance(self.cards, CardData):
+        if not isinstance(self.cards, (CardData, CardDataBerry, CardDataLocal)):
             await interaction.followup.send(
-                "⚠️ /listado necesita la API de cartas (optcg-api). Configura `OPTCG_API_KEY` "
-                "en el .env o despliega tu propia instancia. /buscar sigue funcionando sin ella.",
+                "⚠️ No hay proveedor de cartas disponible. Configura `OPTCG_API_KEY` "
+                "o `BERRYWALLET_API_KEY` en el .env.",
                 ephemeral=True)
             return
 

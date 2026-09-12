@@ -23,6 +23,12 @@ CARDMARKET_ACCESS_SECRET = os.getenv("CARDMARKET_ACCESS_SECRET", "")
 OPTCG_API_URL = os.getenv("OPTCG_API_URL", "https://optcg-api.arjunbansal-ai.workers.dev").rstrip("/")
 OPTCG_API_KEY = os.getenv("OPTCG_API_KEY", "")
 
+# --- Catálogo local de cartas (SQLite) ---
+# Alternativa sin claves: se genera con build_local_db.py a partir del catálogo
+# obtenido con el scraper del proyecto optcg-api (MIT). Si existe, el bot lo usa
+# antes que optcg-api/BerryWallet para /buscar y /listado (catálogo completo).
+LOCAL_DB_PATH = os.getenv("LOCAL_DB_PATH", "optcg_cards.db")
+
 # --- Precios de Cardmarket ---
 # La API oficial de Cardmarket está cerrada a nuevas altas, por eso los precios se
 # obtienen de proveedores alternativos (ver prices.py).
