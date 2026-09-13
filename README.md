@@ -1,16 +1,20 @@
 # ⚓ Bot de Discord — One Piece TCG (op.tcg)
 
-Bot en español para servidores de Discord que busca cartas de *One Piece Card Game*,
-muestra precios de **Cardmarket (inglés)** con comparativa de **vendedores de España**,
-lleva el registro de **cartas prestadas** y gestiona **colecciones** con listados
-filtrables e imágenes en grande.
+Bot en español para servidores de Discord que busca cartas de *One Piece Card Game*
+(ficha con imagen y datos), lleva el registro de **cartas prestadas** y gestiona
+**colecciones** con listados filtrables e imágenes en grande.
+
+> 💶 **Precios deshabilitados por ahora**: no hay API de precios disponible (la
+> oficial de Cardmarket está cerrada a nuevas altas, sin fecha de reapertura). Los
+> apartados de precio (`/precio` y las secciones en `/buscar`) están apagados con
+> `PRICES_ENABLED=0`; se reactivarán cuando haya un proveedor funcional.
 
 ## Comandos
 
 | Comando | Qué hace |
 | --- | --- |
-| `/buscar carta:<código o nombre>` | Imagen de la carta + precios de Cardmarket en EUR (Trend/Media/Mínimo) y, si el proveedor lo permite, comparativa **España** (mín. near-mint de vendedores españoles). |
-| `/precio carta:<código o nombre>` | Solo la comparativa de precios. |
+| `/buscar carta:<código o nombre>` | Imagen de la carta + datos (set, rareza, categoría, color, coste/poder, efecto). |
+| `/precio carta:<código o nombre>` | **Deshabilitado** por ahora (no hay API de precios). |
 | `/prestar carta:<...> a:<@usuario> [prestador:@quien_presta] nota?` | Registra una carta prestada: quien presta es quien ejecuta el comando (o `prestador:` si lo hace por otra persona). |
 | `/devolver id:<ID>` o `carta:<código> a:<@usuario> [devuelve:@quien]` | Marca préstamo(s) como devueltos; quien devuelve es quien ejecuta (o `devuelve:`). |
 | `/prestamos [usuario] [historial]` | Lista los préstamos activos (o historial) del servidor. |
@@ -24,9 +28,7 @@ filtrables e imágenes en grande.
 
 - Python 3.10+
 - Cuenta de Discord y una aplicación creada en el [Developer Portal](https://discord.com/developers/applications)
-- Cuenta de Cardmarket (gratis) para los precios
-- (Opcional) Clave de la API comunitaria de cartas [optcg-api](https://github.com/arjunkai/optcg-api)
-- (Opcional, sin claves) Catálogo local de cartas generado con su scraper — ver abajo
+- (Opcional) Catálogo local de cartas (recomendado, sin claves) — ver abajo
 
 ## Puesta en marcha
 
@@ -50,10 +52,15 @@ python bot.py
 2. Pestaña **Bot** → **Reset Token** → cópialo a `DISCORD_TOKEN`.
 3. Pestaña **OAuth2 → URL Generator** → marca `applications.commands` y `bot` → copia la URL y ábrela para invitar al bot a tus servidores. Esa URL de invitación es lo que hace que funcione en **varios servidores** (los comandos son globales).
 
-### 2. Precios de Cardmarket (proveedor alternativo)
+### 2. Precios de Cardmarket (deshabilitados)
 
-> ⚠️ **La API oficial de Cardmarket está cerrada a nuevas altas** (sin fecha de
-> reapertura), así que el bot obtiene los precios de un proveedor alternativo:
+> ⚠️ **Deshabilitados por ahora**: no hay API de precios disponible. La API oficial
+> de Cardmarket está cerrada a nuevas altas (sin fecha de reapertura) y el bot corre
+> con `PRICES_ENABLED=0`, así que `/buscar` muestra la carta sin precios y `/precio`
+> avisa de que está deshabilitado.
+
+Cuando haya un proveedor funcional, pon `PRICES_ENABLED=1` en el `.env` y rellena la
+clave correspondiente:
 
 - **BerryWallet** (recomendado, gratis): precios de Cardmarket en EUR. Regístrate en
   [pokewallet.io/dashboard](https://pokewallet.io/dashboard) (sin tarjeta) y pon la
@@ -70,8 +77,7 @@ python bot.py
 
 La selección se hace con `PRICE_PROVIDER=auto` (prioridad: berrywallet > rapidapi >
 cardmarket). El filtro fino *por idioma inglés* solo existe con la API oficial; los
-proveedores dan el precio de mercado de Cardmarket en EUR. Sin ninguna clave, el bot
-sigue funcionando pero `/buscar` muestra la carta sin precios y explica qué falta.
+proveedores dan el precio de mercado de Cardmarket en EUR.
 
 ### 3. Datos de cartas: elige tu proveedor (todos funcionan sin clave de nadie)
 

@@ -34,6 +34,9 @@ LOCAL_DB_PATH = os.getenv("LOCAL_DB_PATH", "optcg_cards.db")
 # obtienen de proveedores alternativos (ver prices.py).
 # PRICE_PROVIDER = auto | berrywallet | rapidapi | cardmarket
 #   auto: berrywallet (si hay clave) > rapidapi (si hay clave) > cardmarket (si credenciales)
+# PRICES_ENABLED: por ahora deshabilitados (no hay API de precios disponible).
+#   Poner PRICES_ENABLED=1 en el .env cuando haya un proveedor funcional.
+PRICES_ENABLED = os.getenv("PRICES_ENABLED", "0") == "1"
 PRICE_PROVIDER = os.getenv("PRICE_PROVIDER", "auto")
 BERRYWALLET_API_KEY = os.getenv("BERRYWALLET_API_KEY", "")  # gratis: pokewallet.io/dashboard
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")                # RapidAPI "CardMarket API TCG" (free 100/día, añade España)
