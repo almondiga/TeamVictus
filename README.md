@@ -11,8 +11,8 @@ filtrables e imágenes en grande.
 | --- | --- |
 | `/buscar carta:<código o nombre>` | Imagen de la carta + precios de Cardmarket en EUR (Trend/Media/Mínimo) y, si el proveedor lo permite, comparativa **España** (mín. near-mint de vendedores españoles). |
 | `/precio carta:<código o nombre>` | Solo la comparativa de precios. |
-| `/prestar carta:<...> a:<@usuario> nota?` | Registra una carta prestada (quién, a quién, nota). |
-| `/devolver id:<ID>` o `carta:<código> a:<@usuario>` | Marca préstamo(s) como devueltos. |
+| `/prestar carta:<...> a:<@usuario> [prestador:@quien_presta] nota?` | Registra una carta prestada: quien presta es quien ejecuta el comando (o `prestador:` si lo hace por otra persona). |
+| `/devolver id:<ID>` o `carta:<código> a:<@usuario> [devuelve:@quien]` | Marca préstamo(s) como devueltos; quien devuelve es quien ejecuta (o `devuelve:`). |
 | `/prestamos [usuario] [historial]` | Lista los préstamos activos (o historial) del servidor. |
 | `/listado [set] [nombre] [color] [categoría] [rareza] [número] [poder_min] [poder_max] [orden]` | Listado de cartas con cualquier combinación de filtros; las imágenes salen en **cuadrícula en grande**, paginada con botones. |
 | `/coleccion add|remove|ver` | Gestiona tu colección (la de otros usuarios también se puede ver y filtrar). |

@@ -82,13 +82,29 @@ def return_loan(guild_id: int, loan_id: int, user_id: int) -> bool:
     return cur.rowcount > 0
 
 
-def return_loans_by_card(guild_id: int, card_code: str, borrower_id: int, user_id: int) -> int:
+def return_loans_by_pair(guild_id: int, card_code: str, p1: int, p2: int) -> int:
+    """Marca como devueltos los préstamos activos de una carta entre dos personas
+    (da igual el orden: p1 presta a p2, o p2 presta a p1)."""
     conn = get_conn()
     cur = conn.execute(
         "UPDATE loans SET returned_at = datetime('now') "
-        "WHERE guild_id = ? AND card_code = ? AND borrower_id = ? "
-        "AND returned_at IS NULL AND (lender_id = ? OR borrower_id = ?)",
-        (guild_id, card_code, borrower_id, user_id, user_id),
+        "WHERE guild_id = ? AND card_code = ? AND returned_at IS NULL "
+        "AND ((lender_id = ? AND borrower_id = ?) OR (lender_id = ? AND borrower_id = ?))",
+        (guild_id, card_code, p1, p2, p2, p1),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
+def return_loans_of_user(guild_id: int, card_code: str, user_id: int) -> int:
+    """Marca como devueltos los préstamos activos de una carta donde el usuario
+    es parte (la prestó o la recibió). Útil para /devolver sin especificar la otra parte."""
+    conn = get_conn()
+    cur = conn.execute(
+        "UPDATE loans SET returned_at = datetime('now') "
+        "WHERE guild_id = ? AND card_code = ? AND returned_at IS NULL "
+        "AND (lender_id = ? OR borrower_id = ?)",
+        (guild_id, card_code, user_id, user_id),
     )
     conn.commit()
     return cur.rowcount

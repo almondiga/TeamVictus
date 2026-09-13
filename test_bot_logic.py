@@ -68,6 +68,26 @@ check("historial muestra 2", len(db.list_loans(111, active_only=False)) == 2)
 check("activos quedan 1", len(db.list_loans(111)) == 1)
 check("no se toca otro servidor", len(db.list_loans(222)) == 1)
 
+# devolver por pareja (orden indiferente) y por "quien devuelve es parte"
+id4 = db.add_loan(111, 100, 400, "OP02-001", "Edward.Newgate", None)   # 100 presta a 400
+id5 = db.add_loan(111, 400, 100, "OP02-002", "Portgas.D.Ace", None)    # 400 presta a 100
+id6 = db.add_loan(111, 100, 500, "OP03-001", None, None)
+id7 = db.add_loan(111, 100, 500, "OP03-002", None, None)
+check("devolver por pareja (orden directo)",
+      db.return_loans_by_pair(111, "OP02-001", 100, 400) == 1)
+check("devolver por pareja (orden inverso)",
+      db.return_loans_by_pair(111, "OP02-002", 100, 400) == 1)
+check("devolver por pareja repetido = 0",
+      db.return_loans_by_pair(111, "OP02-001", 100, 400) == 0)
+check("devolver por pareja inexistente = 0",
+      db.return_loans_by_pair(111, "OP02-001", 100, 500) == 0)
+check("devolver sin 'a' (quien devuelve es prestador)",
+      db.return_loans_of_user(111, "OP03-001", 100) == 1)
+check("devolver sin 'a' (quien devuelve es receptor)",
+      db.return_loans_of_user(111, "OP03-002", 500) == 1)
+check("pareja no cruza servidor (222 sigue activo)",
+      db.return_loans_by_pair(222, "OP01-001", 100, 200) == 1)
+
 # --- db: colección ---
 db.add_to_collection(111, 100, "OP01-001", "Roronoa Zoro", 1)
 db.add_to_collection(111, 100, "OP01-001", "Roronoa Zoro", 3)
