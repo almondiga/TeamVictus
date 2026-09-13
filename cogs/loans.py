@@ -14,7 +14,18 @@ from discord.ext import commands
 
 import config
 import db
-from carddata import CardData, CardDataFallback, build_card_data
+from carddata import CardData, CardDataFallback, build_card_data, normalize_code
+
+
+def _codigo_valido(texto: str) -> str | None:
+    """Valida que el texto sea un código de carta: `OP01-001` u `OP01 001`.
+
+    Devuelve el código normalizado, o None si no parece un código válido
+    (rechaza nombres y códigos incompletos como 'op01')."""
+    texto = (texto or "").strip()
+    if not texto or not any(sep in texto for sep in ("-", " ")):
+        return None
+    return normalize_code(texto)
 
 
 class LoansCog(commands.Cog):
@@ -26,7 +37,7 @@ class LoansCog(commands.Cog):
 
     @app_commands.command(name="prestar", description="Registra una carta que prestas (o que presta otra persona)")
     @app_commands.describe(
-        carta="Código (OP01-001) o nombre de la carta prestada",
+        carta="Código de la carta (OP01-001 u OP01 001)",
         a="¿A quién se la presta? (quien la recibe)",
         prestador="Quién presta la carta (por defecto: tú)",
         nota="Nota opcional (fecha de devolución pactada, etc.)",
@@ -41,25 +52,34 @@ class LoansCog(commands.Cog):
             await interaction.followup.send("🤔 No puedes prestarte una carta a ti mismo.", ephemeral=True)
             return
 
+        code = _codigo_valido(carta)
+        if not code:
+            await interaction.followup.send(
+                "❌ En los préstamos solo se admiten **códigos de carta** "
+                "(`OP01-001` u `OP01 001`), no nombres.", ephemeral=True)
+            return
+
         try:
-            card = await asyncio.to_thread(self.cards.resolve_card, carta)
+            card = await asyncio.to_thread(self.cards.resolve_card, code)
         except Exception as exc:
             await interaction.followup.send(f"❌ Error al resolver la carta: {exc}", ephemeral=True)
             return
 
-        if not card:
+        if card:
+            codigo, nombre = card["id"] or code, card.get("name") or code
+        else:
+            codigo, nombre = code, code
             await interaction.followup.send(
-                f"❌ No encontré «{carta}». Puedo guardarla igualmente con el código, "
-                f"pero dime el código exacto (p. ej. OP01-001).", ephemeral=True)
-            return
+                f"⚠️ El código `{code}` no está en el catálogo; lo guardo igualmente con ese código.",
+                ephemeral=True)
 
         loan_id = await asyncio.to_thread(
             db.add_loan, interaction.guild_id, presta.id, a.id,
-            card["id"] or carta, card.get("name") or carta, nota)
+            codigo, nombre, nota)
         embed = discord.Embed(
             title="📤 Préstamo registrado",
             color=config.COLOR_OK,
-            description=f"`{card.get('id', carta)}` **{card.get('name', carta)}**",
+            description=f"`{codigo}` **{nombre}**",
         )
         embed.add_field(name="Prestada a", value=a.mention, inline=True)
         embed.add_field(name="Prestada por", value=presta.mention, inline=True)
@@ -73,7 +93,7 @@ class LoansCog(commands.Cog):
     @app_commands.command(name="devolver", description="Marca un préstamo como devuelto")
     @app_commands.describe(
         id="ID del préstamo (lo ves en /prestamos o al prestar)",
-        carta="Código o nombre de la carta devuelta",
+        carta="Código de la carta devuelta (OP01-001 u OP01 001)",
         a="La otra parte del préstamo (a quien se devuelve la carta)",
         devuelve="Quién devuelve la carta (por defecto: tú)",
     )
@@ -93,14 +113,11 @@ class LoansCog(commands.Cog):
             return
 
         if carta:
-            from carddata import normalize_code
-            code = normalize_code(carta)
-            if not code:
-                card = await asyncio.to_thread(self.cards.resolve_card, carta)
-                code = card["id"] if card else None
+            code = _codigo_valido(carta)
             if not code:
                 await interaction.response.send_message(
-                    f"❌ No pude identificar el código de «{carta}». Usa el ID del préstamo.", ephemeral=True)
+                    "❌ En las devoluciones solo se admiten **códigos de carta** "
+                    "(`OP01-001` u `OP01 001`), no nombres.", ephemeral=True)
                 return
 
             quien = devuelve or interaction.user  # quién devuelve (por defecto, quien ejecuta)
