@@ -178,6 +178,35 @@ sess_bw.calls.clear()
 prov_bw.get_prices("Roronoa Zoro", "OP01-001")
 check("cache evita segunda llamada", len(sess_bw.calls) == 0)
 
+# --- precios POR VARIANTE: paralela/AA cotiza distinto de la Normal ---
+check("_base_codigo quita sufijo", prices._base_codigo("OP01-001_p1") == "OP01-001"
+      and prices._base_codigo("OP01-001_r1") == "OP01-001"
+      and prices._base_codigo("OP01-001") == "OP01-001")
+check("_sufijo_variante", prices._sufijo_variante("OP01-001_p1") == "p"
+      and prices._sufijo_variante("OP01-001_r1") == "r"
+      and prices._sufijo_variante("OP01-001") == "")
+
+payload_paralela = {"data": [
+    {"card_number": "OP01-001", "name": "Roronoa Zoro", "sub_type_name": "Normal",
+     "cardmarket": {"prices": {"trend": 2.41, "avg": 2.5, "low": 1.0}}},
+    {"card_number": "OP01-001", "name": "Roronoa Zoro (001) (Parallel)",
+     "sub_type_name": "Foil",
+     "cardmarket": {"prices": {"trend": 574.14, "avg": 590.0, "low": 500.0}}},
+    {"card_number": "OP01-001", "name": "Roronoa Zoro - OP01-001 (Alternate Art)",
+     "sub_type_name": "Foil", "cardmarket": {}},
+]}
+sess_par = FakeSession(payload_paralela)
+prov_par = prices.BerryWalletProvider("clave_test", session=sess_par)
+res_norm = prov_par.get_prices("Roronoa Zoro", "OP01-001")
+check("variante base -> precio Normal", res_norm.trend == 2.41, res_norm.trend)
+res_par = prov_par.get_prices("Roronoa Zoro", "OP01-001_p1")
+check("variante _p1 -> precio paralela", res_par and res_par.trend == 574.14,
+      getattr(res_par, "trend", None))
+check("variante _p1 consulta por código base",
+      sess_par.calls[-1][1]["params"]["q"] == "OP01-001")
+res_rep = prov_par.get_prices("Roronoa Zoro", "OP01-001_r1")
+check("variante _r1 -> cae a Normal", res_rep.trend == 2.41, getattr(res_rep, "trend", None))
+
 # --- CardTrader: comparativa España (mercado propio, gratis sin tarjeta) ---
 class FakeRouteSession:
     def __init__(self, rutas):
@@ -185,8 +214,14 @@ class FakeRouteSession:
         self.calls = []
     def get(self, url, **kw):
         self.calls.append((url, kw))
+        params = kw.get("params") or {}
         for clave, payload in self.rutas.items():
             if clave in url:
+                # marketplace/products devuelve {blueprint_id: [ofertas]}: elige el grupo
+                if isinstance(payload, dict) and "blueprint_id" in params:
+                    grupo = payload.get(str(params["blueprint_id"]))
+                    if grupo is not None:
+                        return FakeResp(grupo)
                 return FakeResp(payload)
         return FakeResp([])
 
@@ -196,7 +231,7 @@ payload_ct = {
     "expansions": [{"id": 3332, "game_id": 15, "code": "op01", "name": "OP-01: Romance Dawn"}],
     "blueprints/export": [
         {"id": 5002, "name": "Roronoa Zoro",
-         "fixed_properties": {"collector_number": "OP01-001b"}},
+         "fixed_properties": {"collector_number": "OP01-001A"}},
         {"id": 5001, "name": "Roronoa Zoro",
          "fixed_properties": {"collector_number": "OP01-001"}},
     ],
@@ -209,6 +244,10 @@ payload_ct = {
          "user": {"country_code": "ES"}},
         {"id": 3, "quantity": 1, "price": {"cents": 400, "currency": "EUR"},
          "properties_hash": {"condition": "Slightly Played", "onepiece_language": "en"},
+         "user": {"country_code": "ES"}},
+    ], "5002": [
+        {"id": 9, "quantity": 1, "price": {"cents": 99900, "currency": "EUR"},
+         "properties_hash": {"condition": "Near Mint", "onepiece_language": "en"},
          "user": {"country_code": "ES"}},
     ]},
 }
@@ -223,6 +262,15 @@ check("cardtrader nota aclara mercado propio", res_ct.nota and "no Cardmarket" i
 check("cardtrader elige variante Normal por collector_number",
       any(c[1].get("params", {}).get("blueprint_id") == 5001
           and c[1].get("params", {}).get("language") == "en"
+          for c in sess_ct.calls))
+
+# variante Alternate Art (collector base+'A') -> su propio blueprint y precio
+sess_ct.calls.clear()
+res_ct_aa = prov_ct.get_prices("Roronoa Zoro", "OP01-001_p1")
+check("cardtrader variante AA -> blueprint OP01-001A",
+      res_ct_aa.es_disponible and res_ct_aa.es_price == 999.0, res_ct_aa.es_price)
+check("cardtrader variante AA consulta blueprint 5002",
+      any(c[1].get("params", {}).get("blueprint_id") == 5002
           for c in sess_ct.calls))
 
 # CardTrader sin vendedores ES -> es no disponible

@@ -22,6 +22,7 @@ EUR de Cardmarket vía BerryWallet + comparativa España vía CardTrader.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import quote_plus
@@ -70,6 +71,17 @@ def _norm_set(codigo: str) -> str:
     return "".join(ch for ch in (codigo or "").upper() if ch.isalnum())
 
 
+def _base_codigo(codigo: str | None) -> str:
+    """Quita el sufijo de variante: 'OP01-001_p1' -> 'OP01-001'."""
+    return re.sub(r"_[pr]\d+$", "", codigo or "", flags=re.IGNORECASE)
+
+
+def _sufijo_variante(codigo: str | None) -> str:
+    """Sufijo de variante: 'OP01-001_p1' -> 'p' · 'OP01-001_r1' -> 'r' · '' si base."""
+    m = re.search(r"_([pr])\d+$", codigo or "", re.IGNORECASE)
+    return m.group(1).lower() if m else ""
+
+
 def _elegir_mejor(items: list[dict], card_code: str | None, card_name: str) -> dict | None:
     """Elige el item que mejor coincide por código (card_number) y luego por nombre."""
     if not items:
@@ -115,6 +127,29 @@ def _elegir_con_precios(items: list[dict], card_code: str | None, card_name: str
     return best
 
 
+def _elegir_paralela(items: list[dict], card_code: str | None, card_name: str) -> dict | None:
+    """Para una variante paralela / Alternate Art: prefiere el item con precios cuyo
+    nombre o sub_tipo indique paralela (p. ej. 'Roronoa Zoro (001) (Parallel)'),
+    porque BerryWallet lista la paralela como otra variante con precios propios.
+    Si no hay datos de paralela, cae a la selección normal."""
+    if not items:
+        return None
+
+    def es_paralela(it: dict) -> bool:
+        nombre = (it.get("name") or "").lower()
+        sub = (it.get("sub_type_name") or "").lower()
+        return ("(parallel)" in nombre or "(alternate art)" in nombre
+                or sub in ("foil", "parallel"))
+
+    con_precios = [it for it in items
+                   if es_paralela(it) and (it.get("cardmarket") or {}).get("prices")]
+    if con_precios:
+        # prefiere la marcada como (Parallel)
+        con_precios.sort(key=lambda x: 0 if "(parallel)" in (x.get("name") or "").lower() else 1)
+        return con_precios[0]
+    return _elegir_con_precios(items, card_code, card_name)
+
+
 class _TTLCache:
     def __init__(self, ttl: int) -> None:
         self.ttl = ttl
@@ -151,8 +186,10 @@ class BerryWalletProvider(PriceProvider):
         self._cache = _TTLCache(1800)  # 30 min
 
     def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
-        q = card_code or card_name
-        cache_key = f"bw:{q}"
+        base = _base_codigo(card_code)
+        sufijo = _sufijo_variante(card_code)
+        q = base or card_name
+        cache_key = f"bw:{q}:{sufijo}"
         hit = self._cache.get(cache_key)
         if hit is not None:
             return hit
@@ -165,7 +202,11 @@ class BerryWalletProvider(PriceProvider):
         resp.raise_for_status()
         data = resp.json()
         items = data.get("data") or data.get("results") or []
-        best = _elegir_con_precios(items, card_code, card_name)
+        if sufijo == "p":
+            # variante paralela / Alternate Art: busca su propio precio
+            best = _elegir_paralela(items, base, card_name)
+        else:
+            best = _elegir_con_precios(items, base, card_name)
         result: PriceResult | None = None
         if best:
             cm = best.get("cardmarket") or {}
@@ -196,7 +237,7 @@ class RapidApiCMProvider(PriceProvider):
         self._cache = _TTLCache(3600)  # 1 h
 
     def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
-        q = card_code or card_name
+        q = _base_codigo(card_code) or card_name
         cache_key = f"rapi:{q}"
         hit = self._cache.get(cache_key)
         if hit is not None:
@@ -209,7 +250,7 @@ class RapidApiCMProvider(PriceProvider):
         resp.raise_for_status()
         data = resp.json()
         items = data if isinstance(data, list) else (data.get("data") or data.get("results") or [])
-        best = _elegir_mejor(items, card_code, card_name)
+        best = _elegir_mejor(items, q, card_name)
         result: PriceResult | None = None
         if best:
             cm = (best.get("prices") or {}).get("cardmarket") or {}
@@ -360,12 +401,19 @@ class CardTraderProvider(PriceProvider):
             return PriceResult(provider=self.name,
                                nota="CardTrader necesita el código de carta (p. ej. OP01-001)")
         try:
-            set_code = card_code.rsplit("-", 1)[0]  # OP01-001 -> OP01
+            base = _base_codigo(card_code)               # OP01-001_p1 -> OP01-001
+            sufijo = _sufijo_variante(card_code)          # 'p' / 'r' / ''
+            set_code = base.rsplit("-", 1)[0]             # OP01-001 -> OP01
             expansion = self._expansion_de(set_code)
             if not expansion:
                 return PriceResult(provider=self.name,
                                    nota=f"Set «{set_code}» no encontrado en CardTrader")
-            bp = self._blueprint_de(expansion.get("id"), card_name, card_code)
+            # las Alternate Art tienen blueprint propio con collector base+'A'
+            bp = None
+            if sufijo == "p":
+                bp = self._blueprint_de(expansion.get("id"), card_name, base + "A")
+            if bp is None:
+                bp = self._blueprint_de(expansion.get("id"), card_name, base)
             if not bp:
                 return PriceResult(provider=self.name,
                                    nota=f"«{card_name} ({card_code})» no encontrado en CardTrader")

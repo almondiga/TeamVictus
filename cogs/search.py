@@ -196,7 +196,7 @@ class SearchCog(commands.Cog):
             except Exception:
                 variantes = None
             if variantes and len(variantes) > 1:
-                vista = FichaView(self, variantes, precio, precio_error)
+                vista = FichaView(self, variantes)
                 for i, v in enumerate(variantes):
                     if (v.get("id") or "").upper() == (card.get("id") or "").upper():
                         vista.indice = i
@@ -309,23 +309,30 @@ class FichaView(discord.ui.View):
     """Paginador de variantes de una carta en /buscar: ◀ Variante ▶ cambia la
     imagen y el código (Normal, Alternate Art, Reprint...) manteniendo los precios."""
 
-    def __init__(self, cog: SearchCog, variantes: list[dict],
-                 precio: PriceResult | None, precio_error: str | None) -> None:
+    def __init__(self, cog: SearchCog, variantes: list[dict]) -> None:
         super().__init__(timeout=300)
         self.cog = cog
         self.variantes = variantes
-        self.precio = precio
-        self.precio_error = precio_error
         self.indice = 0
+        self._precios_cache: dict[int, tuple[PriceResult | None, str | None]] = {}
         self._actualizar_botones()
 
     def _actualizar_botones(self) -> None:
         self.prev.disabled = self.indice <= 0
         self.next.disabled = self.indice >= len(self.variantes) - 1
 
+    async def _precio_indice(self, indice: int) -> tuple[PriceResult | None, str | None]:
+        """Precios DE ESA VARIANTE (cada variante tiene su propio precio en los
+        proveedores: Normal, Alternate Art/Paralela y Reprint cotizan distinto)."""
+        if indice not in self._precios_cache:
+            card = self.variantes[indice]
+            self._precios_cache[indice] = await self.cog._precio_para(card)
+        return self._precios_cache[indice]
+
     async def _embed_indice(self, indice: int) -> tuple[discord.Embed, list[discord.File]]:
         card = self.variantes[indice]
-        embed, archivos, _ = await self.cog._embed_carta(card, self.precio, self.precio_error)
+        precio, precio_error = await self._precio_indice(indice)
+        embed, archivos, _ = await self.cog._embed_carta(card, precio, precio_error)
         etiqueta = variante_nombre(card, self.variantes)
         embed.set_footer(
             text=f"Variante {indice + 1}/{len(self.variantes)} · {etiqueta}")
