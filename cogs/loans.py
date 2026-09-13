@@ -136,14 +136,15 @@ class LoansCog(commands.Cog):
             color=config.COLOR_WARN,
         )
         for row in loans:
-            lender = self.bot.get_user(row["lender_id"])
-            borrower = self.bot.get_user(row["borrower_id"])
+            guild = interaction.guild
+            lender = guild.get_member(row["lender_id"]) if guild else None
+            borrower = guild.get_member(row["borrower_id"]) if guild else None
             estado = "✅ devuelto" if row["returned_at"] else "⏳ pendiente"
             nombre = f"`{row['card_code']}` {row['card_name'] or ''}".strip()
             embed.add_field(
                 name=f"#{row['id']} · {nombre}",
-                value=f"{lender.mention if lender else row['lender_id']} → "
-                      f"{borrower.mention if borrower else row['borrower_id']} · "
+                value=f"{lender.mention if lender else f'<@{row[\"lender_id\"]}>'} → "
+                      f"{borrower.mention if borrower else f'<@{row[\"borrower_id\"]}>'} · "
                       f"{row['lent_at'][:10]} · {estado}"
                       + (f"\n📝 {row['note']}" if row["note"] else ""),
                 inline=False,
