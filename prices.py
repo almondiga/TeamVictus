@@ -267,10 +267,12 @@ class CardTraderProvider(PriceProvider):
                                  headers={"Authorization": f"Bearer {self.token}"},
                                  timeout=20)
             r.raise_for_status()
-            self._juegos = r.json() or []
-        for g in self._juegos:
-            if "one piece" in (g.get("name") or "").lower():
-                return g.get("id")
+            data = r.json()
+            self._juegos = data.get("array") if isinstance(data, dict) else (data or [])
+        for g in self._juegos or []:
+            texto = f"{(g or {}).get('name') or ''} {(g or {}).get('display_name') or ''}".lower()
+            if "one piece" in texto:
+                return (g or {}).get("id")
         return None
 
     def _expansion_de(self, set_code: str) -> dict | None:
@@ -309,13 +311,22 @@ class CardTraderProvider(PriceProvider):
             hit = lista
         nombre = (card_name or "").strip().upper()
         codigo = (card_code or "").strip().upper()
+        codigo_norm = _norm_set(codigo)
+        # 1) coincidencia exacta por collector_number (evita alt-art/paralelas)
+        for bp in hit:
+            fp = bp.get("fixed_properties") or {}
+            if _norm_set(fp.get("collector_number") or "") == codigo_norm:
+                return bp
+        # 2) nombre exacto
         for bp in hit:
             n = (bp.get("name") or "").strip().upper()
-            if n == f"{nombre} ({codigo})" or n == nombre:
+            if n == nombre:
                 return bp
+        # 3) el código aparece en el nombre
         for bp in hit:
-            if codigo and codigo in (bp.get("name") or "").upper():
+            if codigo_norm and codigo_norm in _norm_set(bp.get("name") or ""):
                 return bp
+        # 4) el nombre aparece en el nombre del blueprint
         for bp in hit:
             if nombre and nombre in (bp.get("name") or "").upper():
                 return bp
@@ -368,19 +379,26 @@ class CardTraderProvider(PriceProvider):
                                nota="Sin vendedores de España en CardTrader para esta carta (idioma EN)")
 
         no_foil = [o for o in es if not _es_foil(o)]
-        pool = no_foil or es  # prefiere no-foil; si solo hay foil, usa esas
+        candidatos = no_foil or es  # prefiere no-foil; si solo hay foil, usa esas
+        nm = [o for o in candidatos
+              if (o.get("properties_hash") or {}).get("condition") in ("Near Mint", "Mint")]
+        pool = nm or candidatos   # prefiere Near Mint
         precios = [_num((o.get("price") or {}).get("cents")) for o in pool]
         precios = [p / 100.0 for p in precios if p is not None]
         if not precios:
             return PriceResult(provider=self.name, nota="CardTrader sin precios en EUR")
         es_count = sum(int(o.get("quantity") or 1) for o in pool)
         link = f"https://www.cardtrader.com/en/cards/{bp.get('id')}"
+        nota = ("CardTrader (mercado propio, no Cardmarket) · mín. vendedores de España, "
+                "idioma EN")
+        if not nm:
+            nota += " (sin ofertas Near Mint)"
         return PriceResult(
             provider=self.name,
             es_price=min(precios),
             es_count=es_count,
             link=link,
-            nota="CardTrader (mercado propio, no Cardmarket) · mín. vendedores de España, idioma EN",
+            nota=nota,
         )
 
 

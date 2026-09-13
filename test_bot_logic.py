@@ -169,6 +169,7 @@ check("rapidapi low", res_rapi.low == 2.0)
 config.PRICE_PROVIDER = "auto"
 config.BERRYWALLET_API_KEY = ""
 config.RAPIDAPI_KEY = ""
+config.CARDTRADER_TOKEN = ""
 prov, err = prices.build_price_provider()
 check("factory sin claves -> (None, error)", prov is None and err and "BERRYWALLET" in err, err)
 
@@ -190,18 +191,24 @@ class FakeRouteSession:
         return FakeResp([])
 
 payload_ct = {
-    "games": [{"id": 7, "name": "One Piece"}, {"id": 1, "name": "Magic: The Gathering"}],
-    "expansions": [{"id": 123, "game_id": 7, "code": "OP-01", "name": "Romance Dawn"}],
-    "blueprints/export": [{"id": 5001, "name": "Roronoa Zoro (OP01-001)", "expansion_id": 123}],
+    "games": {"array": [{"id": 15, "name": "One Piece", "display_name": "One Piece"},
+                        {"id": 1, "name": "Magic", "display_name": "Magic: the Gathering"}]},
+    "expansions": [{"id": 3332, "game_id": 15, "code": "op01", "name": "OP-01: Romance Dawn"}],
+    "blueprints/export": [
+        {"id": 5002, "name": "Roronoa Zoro",
+         "fixed_properties": {"collector_number": "OP01-001b"}},
+        {"id": 5001, "name": "Roronoa Zoro",
+         "fixed_properties": {"collector_number": "OP01-001"}},
+    ],
     "marketplace/products": {"5001": [
         {"id": 1, "quantity": 1, "price": {"cents": 350, "currency": "EUR"},
-         "properties_hash": {"condition": "Near Mint", "op_language": "en"},
+         "properties_hash": {"condition": "Near Mint", "onepiece_language": "en"},
          "user": {"country_code": "IT"}},
         {"id": 2, "quantity": 3, "price": {"cents": 150, "currency": "EUR"},
-         "properties_hash": {"condition": "Near Mint", "op_language": "en"},
+         "properties_hash": {"condition": "Near Mint", "onepiece_language": "en"},
          "user": {"country_code": "ES"}},
         {"id": 3, "quantity": 1, "price": {"cents": 400, "currency": "EUR"},
-         "properties_hash": {"condition": "Near Mint", "op_foil": True},
+         "properties_hash": {"condition": "Slightly Played", "onepiece_language": "en"},
          "user": {"country_code": "ES"}},
     ]},
 }
@@ -210,10 +217,10 @@ prov_ct = prices.CardTraderProvider("token_test", session=sess_ct)
 res_ct = prov_ct.get_prices("Roronoa Zoro", "OP01-001")
 check("cardtrader es_price mín no-foil ES", res_ct.es_disponible and res_ct.es_price == 1.5,
       res_ct.es_price)
-check("cardtrader es_count solo no-foil ES", res_ct.es_count == 3)
+check("cardtrader es_count (NM: qty 3)", res_ct.es_count == 3)
 check("cardtrader sin EUR (trend None)", res_ct.trend is None)
 check("cardtrader nota aclara mercado propio", res_ct.nota and "no Cardmarket" in res_ct.nota)
-check("cardtrader busca por blueprint y language=en",
+check("cardtrader elige variante Normal por collector_number",
       any(c[1].get("params", {}).get("blueprint_id") == 5001
           and c[1].get("params", {}).get("language") == "en"
           for c in sess_ct.calls))
@@ -222,7 +229,7 @@ check("cardtrader busca por blueprint y language=en",
 payload_ct_sin = dict(payload_ct)
 payload_ct_sin["marketplace/products"] = {"5001": [
     {"id": 1, "quantity": 1, "price": {"cents": 350, "currency": "EUR"},
-     "properties_hash": {"condition": "Near Mint", "op_language": "en"},
+     "properties_hash": {"condition": "Near Mint", "onepiece_language": "en"},
      "user": {"country_code": "IT"}}]}
 res_ct_sin = prices.CardTraderProvider(
     "t", session=FakeRouteSession(payload_ct_sin)).get_prices("Roronoa Zoro", "OP01-001")
