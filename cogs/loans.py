@@ -28,6 +28,19 @@ def _codigo_valido(texto: str) -> str | None:
     return normalize_code(texto)
 
 
+def _dividir_codigos(texto: str) -> tuple[list[str], list[str]]:
+    """Divide el parámetro por comas: 'OP01-001, op02 002' -> (códigos válidos, inválidos)."""
+    validos: list[str] = []
+    invalidos: list[str] = []
+    for parte in (texto or "").split(","):
+        parte = parte.strip()
+        if not parte:
+            continue
+        codigo = _codigo_valido(parte)
+        (validos if codigo else invalidos).append(codigo or parte)
+    return validos, invalidos
+
+
 class LoansCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -35,11 +48,11 @@ class LoansCog(commands.Cog):
 
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="prestar", description="Registra una carta que prestas (o que presta otra persona)")
+    @app_commands.command(name="prestar", description="Registra cartas que prestas (o que presta otra persona)")
     @app_commands.describe(
-        carta="Código de la carta (OP01-001 u OP01 001)",
-        a="¿A quién se la presta? (quien la recibe)",
-        prestador="Quién presta la carta (por defecto: tú)",
+        carta="Código(s) de carta: OP01-001, OP02-002 (varios separados por coma)",
+        a="¿A quién se las presta? (quien las recibe)",
+        prestador="Quién presta las cartas (por defecto: tú)",
         nota="Nota opcional (fecha de devolución pactada, etc.)",
     )
     async def prestar(self, interaction: discord.Interaction,
@@ -52,48 +65,67 @@ class LoansCog(commands.Cog):
             await interaction.followup.send("🤔 No puedes prestarte una carta a ti mismo.", ephemeral=True)
             return
 
-        code = _codigo_valido(carta)
-        if not code:
+        codigos, invalidos = _dividir_codigos(carta)
+        if not codigos:
             await interaction.followup.send(
                 "❌ En los préstamos solo se admiten **códigos de carta** "
-                "(`OP01-001` u `OP01 001`), no nombres.", ephemeral=True)
+                "(`OP01-001` u `OP01 001`, separados por coma si son varios), no nombres.",
+                ephemeral=True)
             return
+        if invalidos:
+            await interaction.followup.send(
+                "❌ Estos códigos no son válidos (solo `OP01-001` u `OP01 001`): "
+                f"{', '.join(invalidos)}", ephemeral=True)
+            return
+
+        def _resolver(prov, lista):
+            return [(c, prov.resolve_card(c)) for c in lista]
 
         try:
-            card = await asyncio.to_thread(self.cards.resolve_card, code)
+            resueltas = await asyncio.to_thread(_resolver, self.cards, codigos)
         except Exception as exc:
-            await interaction.followup.send(f"❌ Error al resolver la carta: {exc}", ephemeral=True)
+            await interaction.followup.send(f"❌ Error al resolver las cartas: {exc}", ephemeral=True)
             return
 
-        if card:
-            codigo, nombre = card["id"] or code, card.get("name") or code
-        else:
-            codigo, nombre = code, code
-            await interaction.followup.send(
-                f"⚠️ El código `{code}` no está en el catálogo; lo guardo igualmente con ese código.",
-                ephemeral=True)
+        desconocidas = []
+        descripcion = []
+        for code, card in resueltas:
+            if card:
+                codigo, nombre = card["id"] or code, card.get("name") or code
+            else:
+                codigo, nombre = code, code
+                desconocidas.append(code)
+            await asyncio.to_thread(
+                db.add_loan, interaction.guild_id, presta.id, a.id, codigo, nombre, nota)
+            descripcion.append(f"`{codigo}` **{nombre}**")
 
-        loan_id = await asyncio.to_thread(
-            db.add_loan, interaction.guild_id, presta.id, a.id,
-            codigo, nombre, nota)
+        if desconocidas:
+            await interaction.followup.send(
+                f"⚠️ Códigos no encontrados en el catálogo (guardados igualmente): "
+                f"{', '.join(desconocidas)}", ephemeral=True)
+
+        MAX_LINEAS = 15
+        texto = "\n".join(descripcion[:MAX_LINEAS])
+        if len(descripcion) > MAX_LINEAS:
+            texto += f"\n… y {len(descripcion) - MAX_LINEAS} más"
         embed = discord.Embed(
-            title="📤 Préstamo registrado",
+            title=f"📤 Préstamos registrados ({len(descripcion)})",
             color=config.COLOR_OK,
-            description=f"`{codigo}` **{nombre}**",
+            description=texto,
         )
-        embed.add_field(name="Prestada a", value=a.mention, inline=True)
-        embed.add_field(name="Prestada por", value=presta.mention, inline=True)
+        embed.add_field(name="Prestadas a", value=a.mention, inline=True)
+        embed.add_field(name="Prestadas por", value=presta.mention, inline=True)
         if nota:
             embed.add_field(name="Nota", value=nota, inline=False)
-        embed.set_footer(text=f"ID del préstamo: #{loan_id} · usa /devolver id:{loan_id} al recuperarla")
+        embed.set_footer(text="Para devolver: /devolver carta:<código> a:@usuario (o /devolver id:<ID>)")
         await interaction.followup.send(embed=embed)
 
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="devolver", description="Marca un préstamo como devuelto")
+    @app_commands.command(name="devolver", description="Marca préstamo(s) como devueltos")
     @app_commands.describe(
         id="ID del préstamo (lo ves en /prestamos o al prestar)",
-        carta="Código de la carta devuelta (OP01-001 u OP01 001)",
+        carta="Código(s) de carta devuelta: OP01-001, OP02-002 (varios separados por coma)",
         a="La otra parte del préstamo (a quien se devuelve la carta)",
         devuelve="Quién devuelve la carta (por defecto: tú)",
     )
@@ -113,47 +145,63 @@ class LoansCog(commands.Cog):
             return
 
         if carta:
-            code = _codigo_valido(carta)
-            if not code:
-                await interaction.response.send_message(
+            await interaction.response.defer()
+            codigos, invalidos = _dividir_codigos(carta)
+            if not codigos:
+                await interaction.followup.send(
                     "❌ En las devoluciones solo se admiten **códigos de carta** "
-                    "(`OP01-001` u `OP01 001`), no nombres.", ephemeral=True)
+                    "(`OP01-001` u `OP01 001`, separados por coma si son varios), no nombres.",
+                    ephemeral=True)
+                return
+            if invalidos:
+                await interaction.followup.send(
+                    "❌ Estos códigos no son válidos (solo `OP01-001` u `OP01 001`): "
+                    f"{', '.join(invalidos)}", ephemeral=True)
                 return
 
             quien = devuelve or interaction.user  # quién devuelve (por defecto, quien ejecuta)
 
             if a is not None:
                 if a.id == quien.id:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "🤔 La otra parte y quien devuelve no pueden ser la misma persona.", ephemeral=True)
                     return
-                n = await asyncio.to_thread(
-                    db.return_loans_by_pair, code, a.id, quien.id)
-                if n == 0:
-                    await interaction.response.send_message(
-                        f"❌ No hay préstamos activos de `{code}` entre {a.mention} y {quien.mention}.",
-                        ephemeral=True)
+                lineas = []
+                total = 0
+                for code in codigos:
+                    n = await asyncio.to_thread(
+                        db.return_loans_by_pair, code, a.id, quien.id)
+                    total += n
+                    lineas.append(f"`{code}` → **{n}** devuelto(s)")
+                if total == 0:
+                    await interaction.followup.send(
+                        f"❌ No hay préstamos activos de {', '.join(f'`{c}`' for c in codigos)} "
+                        f"entre {a.mention} y {quien.mention}.", ephemeral=True)
                     return
-                await interaction.response.send_message(
-                    f"✅ {n} préstamo(s) de `{code}` entre {a.mention} y {quien.mention} "
-                    f"marcados como devueltos.", ephemeral=False)
+                await interaction.followup.send(
+                    f"✅ **{total}** préstamo(s) devueltos entre {a.mention} y {quien.mention}:\n"
+                    + "\n".join(lineas))
                 return
 
             # sin 'a': se devuelven las cartas de las que el que devuelve es parte
-            n = await asyncio.to_thread(
-                db.return_loans_of_user, code, quien.id)
-            if n == 0:
-                await interaction.response.send_message(
-                    f"❌ No hay préstamos activos de `{code}` en los que {quien.mention} sea parte.",
-                    ephemeral=True)
+            lineas = []
+            total = 0
+            for code in codigos:
+                n = await asyncio.to_thread(
+                    db.return_loans_of_user, code, quien.id)
+                total += n
+                lineas.append(f"`{code}` → **{n}** devuelto(s)")
+            if total == 0:
+                await interaction.followup.send(
+                    f"❌ No hay préstamos activos de {', '.join(f'`{c}`' for c in codigos)} "
+                    f"en los que {quien.mention} sea parte.", ephemeral=True)
                 return
-            await interaction.response.send_message(
-                f"✅ {n} préstamo(s) de `{code}` de {quien.mention} marcados como devueltos.",
-                ephemeral=False)
+            await interaction.followup.send(
+                f"✅ **{total}** préstamo(s) de {quien.mention} devueltos:\n" + "\n".join(lineas))
             return
 
         await interaction.response.send_message(
-            "Uso: `/devolver id:123` o `/devolver carta:OP01-001 a:@usuario`", ephemeral=True)
+            "Uso: `/devolver id:123` o `/devolver carta:OP01-001,OP02-002 a:@usuario`", ephemeral=True)
 
     # ------------------------------------------------------------------
 

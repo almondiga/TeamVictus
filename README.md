@@ -15,8 +15,8 @@ Bot en español para servidores de Discord que busca cartas de *One Piece Card G
 | --- | --- |
 | `/buscar carta:<código o nombre>` | Imagen de la carta + datos (set, rareza, categoría, color, coste/poder, efecto). |
 | `/precio carta:<código o nombre>` | **Deshabilitado** por ahora (no hay API de precios). |
-| `/prestar carta:<código> a:<@usuario> [prestador:@quien_presta] nota?` | Registra una carta prestada (solo códigos `OP01-001` u `OP01 001`); quien presta es quien ejecuta (o `prestador:`). |
-| `/devolver id:<ID>` o `carta:<código> a:<@usuario> [devuelve:@quien]` | Marca préstamo(s) como devueltos (solo códigos `OP01-001` u `OP01 001`); quien devuelve es quien ejecuta (o `devuelve:`). |
+| `/prestar carta:<códigos> a:<@usuario> [prestador:@quien_presta] nota?` | Registra cartas prestadas (códigos `OP01-001` u `OP01 001`, varios separados por coma); quien presta es quien ejecuta (o `prestador:`). |
+| `/devolver id:<ID>` o `carta:<códigos> a:<@usuario> [devuelve:@quien]` | Marca préstamo(s) como devueltos (códigos `OP01-001` u `OP01 001`, varios separados por coma); quien devuelve es quien ejecuta (o `devuelve:`). |
 | `/prestamos [usuario] [historial]` | Lista los préstamos activos (o historial). Son **globales**: se ven desde todos los servidores donde esté el bot. |
 | `/listado [set] [nombre] [color] [categoría] [rareza] [número] [poder_min] [poder_max] [orden]` | Listado de cartas con cualquier combinación de filtros; las imágenes salen en **cuadrícula en grande**, paginada con botones. |
 | `/coleccion add|remove|ver` | Gestiona tu colección (la de otros usuarios también se puede ver y filtrar). |
