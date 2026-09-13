@@ -5,10 +5,10 @@
   de coincidencias: si hay varias, se muestran en una cuadrícula con imágenes
   (paginada) más un selector para abrir la ficha de la que quieras.
 
-Los precios están deshabilitados por ahora (no hay API de precios disponible:
-la API oficial de Cardmarket está cerrada a nuevas altas). Cuando haya un
-proveedor funcional (BerryWallet/RapidAPI), basta con poner PRICES_ENABLED=1
-en el .env y se reactivan las secciones de precio (EUR y España).
+Los precios usan BerryWallet (gratis, sin tarjeta): Cardmarket EUR
+(Trend/Media/Mínimo). La comparativa por país España solo aparece si hay un
+proveedor con desglose por país (RapidAPI, opcional). Se activan con
+PRICES_ENABLED=1 en el .env.
 """
 from __future__ import annotations
 
@@ -191,7 +191,7 @@ class SearchCog(commands.Cog):
 
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="precio", description="Precios de una carta (deshabilitado por ahora)")
+    @app_commands.command(name="precio", description="Precios de una carta (Cardmarket EUR)")
     @app_commands.describe(carta="Código o nombre de la carta")
     async def precio(self, interaction: discord.Interaction, carta: str) -> None:
         await interaction.response.defer()
