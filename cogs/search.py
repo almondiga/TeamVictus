@@ -13,7 +13,9 @@ PRICES_ENABLED=1 en el .env.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import io
+import traceback
 
 import discord
 from discord import app_commands
@@ -29,6 +31,17 @@ from prices import PriceResult, build_price_provider, URL_MKM_SEARCH
 URL_MKM_SEARCH = URL_MKM_SEARCH
 
 MAX_COINCIDENCIAS = 25  # tope de coincidencias en la cuadrícula / selector
+
+
+def _log_error(origen: str, exc: Exception) -> None:
+    """Registra un error de las vistas (botones/selector) en bot_errors.log."""
+    try:
+        with open("bot_errors.log", "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {origen}: {exc!r}\n")
+            f.write("".join(traceback.format_exception(
+                type(exc), exc, exc.__traceback__)) + "\n")
+    except Exception:
+        pass
 
 
 class SearchCog(commands.Cog):
@@ -212,6 +225,8 @@ class SearchCog(commands.Cog):
             # siempre se llama tras interaction.response.defer() (selector del listado)
             await interaction.edit_original_response(
                 content=None, embed=embed, attachments=archivos, view=vista)
+            if vista:
+                vista.message = interaction.message
         else:
             msg = await interaction.followup.send(embed=embed, files=archivos, view=vista)
             if vista:
@@ -340,7 +355,11 @@ class FichaView(discord.ui.View):
 
     async def _mostrar(self, interaction: discord.Interaction, indice: int) -> None:
         # ACK inmediato: Discord exige responder en <=3 s
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except Exception as exc:
+            _log_error("FichaView._mostrar.defer", exc)
+            return
         try:
             if indice < 0 or indice >= len(self.variantes):
                 return
@@ -349,8 +368,14 @@ class FichaView(discord.ui.View):
             embed, archivos = await self._embed_indice(indice)
             await interaction.edit_original_response(
                 content=None, embed=embed, attachments=archivos, view=self)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_error(f"FichaView._mostrar variante {indice + 1}", exc)
+            try:
+                await interaction.edit_original_response(
+                    content=f"⚠️ No pude mostrar la variante {indice + 1}: {str(exc)[:120]}",
+                    view=self)
+            except Exception:
+                pass
 
     @discord.ui.button(label="◀ Variante", style=discord.ButtonStyle.secondary, row=0)
     async def prev(self, interaction: discord.Interaction,
