@@ -46,12 +46,20 @@ class OPCGBot(commands.Bot):
         await self.load_extension("cogs.loans")
         await self.load_extension("cogs.listing")
         await self.load_extension("cogs.collection")
-        # Sincronización global de comandos (puede tardar hasta 1h en propagarse).
+        # Sincronización global (puede tardar hasta 1h en propagarse) + por servidor
+        # (instantánea): el comando a nivel de guild tiene prioridad y evita el mensaje
+        # "This command is outdated" cuando se cambian descripciones o parámetros.
         try:
             await self.tree.sync()
             print("✅ Comandos slash sincronizados (globales).")
         except Exception as exc:
-            print(f"⚠️ No se pudieron sincronizar los comandos: {exc}")
+            print(f"⚠️ No se pudieron sincronizar los comandos globales: {exc}")
+        for guild in list(self.guilds):
+            try:
+                await self.tree.sync(guild=guild)
+                print(f"✅ Comandos sincronizados en {guild.name} (instantáneo).")
+            except Exception as exc:
+                print(f"⚠️ No se pudo sincronizar en {guild.name}: {exc}")
 
     async def _health_server(self) -> None:
         """Mini servidor HTTP para health-checks de la plataforma de hosting."""
