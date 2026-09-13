@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import discord
@@ -112,11 +113,12 @@ class ListadoCog(commands.Cog):
 
         view = GridView(cartas, 0, _resumen_filtros(set, nombre, color, categoria, rareza,
                                                     numero, poder_min, poder_max))
-        await interaction.followup.send(
+        msg = await interaction.followup.send(
             content=view.resumen_texto(),
             file=await view.render_pagina(0),
             view=view,
         )
+        view.message = msg
 
 
 # ----------------------------- helpers -----------------------------
@@ -142,14 +144,27 @@ def _resumen_filtros(*args) -> str:
     return " · ".join(etiquetas) if etiquetas else "Sin filtros"
 
 
+# Caché de imágenes descargadas (URL -> (timestamp, imagen)), para que pasar
+# de página no vuelva a bajar las mismas imágenes.
+_IMG_CACHE: dict[str, tuple[float, Image.Image | None]] = {}
+_IMG_TTL = 86400.0  # 24 h
+
+
 def _descargar(url: str) -> Image.Image | None:
+    if not url:
+        return None
+    ahora = time.time()
+    hit = _IMG_CACHE.get(url)
+    if hit and ahora - hit[0] < _IMG_TTL:
+        return hit[1]
     try:
         resp = requests.get(url, timeout=15)
-        if resp.status_code != 200:
-            return None
-        return Image.open(io.BytesIO(resp.content)).convert("RGB")
+        img = (Image.open(io.BytesIO(resp.content)).convert("RGB")
+               if resp.status_code == 200 else None)
     except Exception:
-        return None
+        img = None
+    _IMG_CACHE[url] = (ahora, img)
+    return img
 
 
 def _construir_cuadricula(cartas: list[dict]) -> io.BytesIO:
@@ -196,44 +211,64 @@ def _construir_cuadricula(cartas: list[dict]) -> io.BytesIO:
 
 class GridView(discord.ui.View):
     def __init__(self, cartas: list[dict], pagina: int, resumen: str) -> None:
-        super().__init__(timeout=180)
+        super().__init__(timeout=300)
         self.cartas = cartas
         self.pagina = pagina
         self.resumen = resumen
+        self._paginas_cache: dict[int, io.BytesIO] = {}
         self._actualizar_botones()
 
+    def _total_paginas(self) -> int:
+        return max(1, (len(self.cartas) + config.PAGE_SIZE_GRID - 1) // config.PAGE_SIZE_GRID)
+
     def _actualizar_botones(self) -> None:
-        total_pags = max(1, (len(self.cartas) + config.PAGE_SIZE_GRID - 1) // config.PAGE_SIZE_GRID)
+        total = self._total_paginas()
         self.prev.disabled = self.pagina <= 0
-        self.next.disabled = self.pagina >= total_pags - 1
+        self.next.disabled = self.pagina >= total - 1
 
     def resumen_texto(self) -> str:
-        total_pags = max(1, (len(self.cartas) + config.PAGE_SIZE_GRID - 1) // config.PAGE_SIZE_GRID)
+        total = self._total_paginas()
         return (f"**{len(self.cartas)} cartas** · {self.resumen}\n"
-                f"Página **{self.pagina + 1}/{total_pags}**")
+                f"Página **{self.pagina + 1}/{total}**")
 
     async def render_pagina(self, pagina: int) -> discord.File:
         self.pagina = pagina
         self._actualizar_botones()
-        trozo = self.cartas[pagina * config.PAGE_SIZE_GRID: (pagina + 1) * config.PAGE_SIZE_GRID]
-        buf = await asyncio.to_thread(_construir_cuadricula, trozo)
+        buf = self._paginas_cache.get(pagina)
+        if buf is None:
+            trozo = self.cartas[pagina * config.PAGE_SIZE_GRID:
+                                (pagina + 1) * config.PAGE_SIZE_GRID]
+            buf = await asyncio.to_thread(_construir_cuadricula, trozo)
+            self._paginas_cache[pagina] = buf
+        buf.seek(0)
         return discord.File(buf, filename="listado.png")
 
-    async def _editar(self, interaction: discord.Interaction, pagina: int) -> None:
-        fichero = await self.render_pagina(pagina)
-        await interaction.response.edit_message(content=self.resumen_texto(), attachments=[fichero],
-                                                view=self)
-        self.message = interaction.message
+    async def _cambiar_pagina(self, interaction: discord.Interaction, pagina: int) -> None:
+        # 1) ACK inmediato: Discord exige responder en <=3 s o la interacción falla
+        await interaction.response.defer()
+        try:
+            if pagina < 0 or pagina >= self._total_paginas():
+                return  # botón deshabilitado; no hay nada que hacer
+            fichero = await self.render_pagina(pagina)
+            await interaction.edit_original_response(
+                content=self.resumen_texto(), attachments=[fichero], view=self)
+        except Exception:
+            # no dejes el mensaje roto si falla el render (imagen caída, etc.)
+            try:
+                await interaction.edit_original_response(
+                    content=f"⚠️ No pude renderizar la página **{pagina + 1}**.", view=self)
+            except Exception:
+                pass
 
     @discord.ui.button(label="◀ Anterior", style=discord.ButtonStyle.secondary, row=0)
     async def prev(self, interaction: discord.Interaction,
                    button: discord.ui.Button) -> None:
-        await self._editar(interaction, self.pagina - 1)
+        await self._cambiar_pagina(interaction, self.pagina - 1)
 
     @discord.ui.button(label="Siguiente ▶", style=discord.ButtonStyle.secondary, row=0)
     async def next(self, interaction: discord.Interaction,
                    button: discord.ui.Button) -> None:
-        await self._editar(interaction, self.pagina + 1)
+        await self._cambiar_pagina(interaction, self.pagina + 1)
 
     async def on_timeout(self) -> None:
         for child in self.children:

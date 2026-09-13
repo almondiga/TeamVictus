@@ -184,7 +184,8 @@ class SearchCog(commands.Cog):
         precio, precio_error = await self._precio_para(card)
         embed, archivos, _ = await self._embed_carta(card, precio, precio_error)
         if editar:
-            await interaction.response.edit_message(
+            # siempre se llama tras interaction.response.defer() (selector del listado)
+            await interaction.edit_original_response(
                 content=None, embed=embed, attachments=archivos, view=None)
         else:
             await interaction.followup.send(embed=embed, files=archivos)
@@ -260,6 +261,7 @@ class BuscarResultadosView(GridView):
         return f"{self.cabecera}\n{super().resumen_texto()}"
 
     async def _on_select(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()  # ACK inmediato; la ficha tarda (imagen + precios)
         cid = self.select.values[0]
         card = None
         try:
@@ -267,7 +269,7 @@ class BuscarResultadosView(GridView):
         except Exception:
             card = None
         if not card:
-            await interaction.response.edit_message(
+            await interaction.edit_original_response(
                 content=f"❌ No pude recuperar la carta «{cid}».", embed=None,
                 attachments=[], view=None)
             return
