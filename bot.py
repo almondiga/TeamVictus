@@ -9,12 +9,28 @@ con hosts tipo web (Render free + UptimeRobot, livemy.app, etc.) y poder monitor
 que el proceso está vivo.
 """
 import os
+import socket
 
 import discord
 from aiohttp import web
 from discord.ext import commands
 
 import config
+
+
+def _cerrojo_instancia() -> None:
+    """Candado anti-duplicados (solo al ejecutar `python bot.py`):
+    evita que dos instancias corran a la vez (la tarea programada reinicia el bot
+    si se cae; sin esto, un arranque manual mientras la tarea está activa crea una
+    segunda instancia que bloquea la BD SQLite y pelea por la conexión de Discord)."""
+    _lock_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        _lock_socket.bind(("127.0.0.1", 8181))
+        _lock_socket.listen(1)
+    except OSError:
+        raise SystemExit(
+            "❌ Ya hay otra instancia del bot en marcha (puerto de bloqueo 127.0.0.1:8181 ocupado). "
+            "Detén la otra antes de arrancar de nuevo.")
 
 
 class OPCGBot(commands.Bot):
@@ -81,9 +97,18 @@ async def on_app_command_error(interaction: discord.Interaction,
                                error: discord.app_commands.AppCommandError) -> None:
     if isinstance(error, discord.app_commands.CommandNotFound):
         return
-    print(f"Error en /{interaction.command.name if interaction.command else '?'}: {error}")
+    nombre = interaction.command.name if interaction.command else "?"
+    print(f"Error en /{nombre}: {error!r}", flush=True)
     try:
-        mensaje = "⚠️ Algo falló al ejecutar el comando. Revisa el .env (credenciales de Cardmarket / optcg-api)."
+        with open("bot_errors.log", "a", encoding="utf-8") as f:
+            f.write(f"[{__import__('datetime').datetime.now():%Y-%m-%d %H:%M:%S}] /{nombre}: {error!r}\n")
+    except Exception:
+        pass
+    detalle = str(error)[:180]
+    mensaje = (f"⚠️ Algo falló al ejecutar el comando.\n"
+               f"**Detalle:** {detalle or error.__class__.__name__}\n"
+               f"*Si el detalle menciona credenciales, revisa el .env (Cardmarket / optcg-api).*")
+    try:
         if interaction.response.is_done():
             await interaction.followup.send(mensaje, ephemeral=True)
         else:
@@ -93,6 +118,7 @@ async def on_app_command_error(interaction: discord.Interaction,
 
 
 if __name__ == "__main__":
+    _cerrojo_instancia()
     if not config.DISCORD_TOKEN:
         raise SystemExit("❌ Falta DISCORD_TOKEN en el .env")
     bot.run(config.DISCORD_TOKEN)
