@@ -141,12 +141,15 @@ class LoansCog(commands.Cog):
             borrower = guild.get_member(row["borrower_id"]) if guild else None
             lender_txt = lender.mention if lender else f"<@{row['lender_id']}>"
             borrower_txt = borrower.mention if borrower else f"<@{row['borrower_id']}>"
-            estado = "✅ devuelto" if row["returned_at"] else "⏳ pendiente"
+            # En la vista por defecto todos están pendientes; el estado solo
+            # aporta información cuando se pide el historial (hay devueltos).
+            estado = " · ✅ devuelto" if row["returned_at"] else (
+                " · ⏳ pendiente" if historial else "")
             nombre = f"`{row['card_code']}` {row['card_name'] or ''}".strip()
             embed.add_field(
                 name=f"#{row['id']} · {nombre}",
                 value=f"{lender_txt} → {borrower_txt} · "
-                      f"{row['lent_at'][:10]} · {estado}"
+                      f"{row['lent_at'][:10]}{estado}"
                       + (f"\n📝 {row['note']}" if row["note"] else ""),
                 inline=False,
             )
