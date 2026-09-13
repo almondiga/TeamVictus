@@ -177,6 +177,79 @@ sess_bw.calls.clear()
 prov_bw.get_prices("Roronoa Zoro", "OP01-001")
 check("cache evita segunda llamada", len(sess_bw.calls) == 0)
 
+# --- CardTrader: comparativa España (mercado propio, gratis sin tarjeta) ---
+class FakeRouteSession:
+    def __init__(self, rutas):
+        self.rutas = rutas
+        self.calls = []
+    def get(self, url, **kw):
+        self.calls.append((url, kw))
+        for clave, payload in self.rutas.items():
+            if clave in url:
+                return FakeResp(payload)
+        return FakeResp([])
+
+payload_ct = {
+    "games": [{"id": 7, "name": "One Piece"}, {"id": 1, "name": "Magic: The Gathering"}],
+    "expansions": [{"id": 123, "game_id": 7, "code": "OP-01", "name": "Romance Dawn"}],
+    "blueprints/export": [{"id": 5001, "name": "Roronoa Zoro (OP01-001)", "expansion_id": 123}],
+    "marketplace/products": {"5001": [
+        {"id": 1, "quantity": 1, "price": {"cents": 350, "currency": "EUR"},
+         "properties_hash": {"condition": "Near Mint", "op_language": "en"},
+         "user": {"country_code": "IT"}},
+        {"id": 2, "quantity": 3, "price": {"cents": 150, "currency": "EUR"},
+         "properties_hash": {"condition": "Near Mint", "op_language": "en"},
+         "user": {"country_code": "ES"}},
+        {"id": 3, "quantity": 1, "price": {"cents": 400, "currency": "EUR"},
+         "properties_hash": {"condition": "Near Mint", "op_foil": True},
+         "user": {"country_code": "ES"}},
+    ]},
+}
+sess_ct = FakeRouteSession(payload_ct)
+prov_ct = prices.CardTraderProvider("token_test", session=sess_ct)
+res_ct = prov_ct.get_prices("Roronoa Zoro", "OP01-001")
+check("cardtrader es_price mín no-foil ES", res_ct.es_disponible and res_ct.es_price == 1.5,
+      res_ct.es_price)
+check("cardtrader es_count solo no-foil ES", res_ct.es_count == 3)
+check("cardtrader sin EUR (trend None)", res_ct.trend is None)
+check("cardtrader nota aclara mercado propio", res_ct.nota and "no Cardmarket" in res_ct.nota)
+check("cardtrader busca por blueprint y language=en",
+      any(c[1].get("params", {}).get("blueprint_id") == 5001
+          and c[1].get("params", {}).get("language") == "en"
+          for c in sess_ct.calls))
+
+# CardTrader sin vendedores ES -> es no disponible
+payload_ct_sin = dict(payload_ct)
+payload_ct_sin["marketplace/products"] = {"5001": [
+    {"id": 1, "quantity": 1, "price": {"cents": 350, "currency": "EUR"},
+     "properties_hash": {"condition": "Near Mint", "op_language": "en"},
+     "user": {"country_code": "IT"}}]}
+res_ct_sin = prices.CardTraderProvider(
+    "t", session=FakeRouteSession(payload_ct_sin)).get_prices("Roronoa Zoro", "OP01-001")
+check("cardtrader sin ES -> es_disponible False",
+      res_ct_sin.es_disponible is False and "Sin vendedores" in (res_ct_sin.nota or ""))
+
+# --- Híbrido: BerryWallet EUR + CardTrader España ---
+hyb = prices.HybridProvider(prov_bw, prov_ct)
+res_hyb = hyb.get_prices("Roronoa Zoro", "OP01-001")
+check("hybrid trend de BerryWallet", res_hyb.trend == 1.70)
+check("hybrid es de CardTrader", res_hyb.es_price == 1.5 and res_hyb.es_count == 3)
+check("hybrid provider", res_hyb.provider == "berrywallet+cardtrader")
+
+# fábrica: berry + cardtrader -> híbrido; solo cardtrader -> cardtrader
+config.BERRYWALLET_API_KEY = "pk_test"
+config.CARDTRADER_TOKEN = "ct_token"
+config.RAPIDAPI_KEY = ""
+prov_h, err_h = prices.build_price_provider()
+check("factory berry+cardtrader -> hybrid",
+      isinstance(prov_h, prices.HybridProvider), type(prov_h).__name__)
+config.BERRYWALLET_API_KEY = ""
+prov_ct2, err_ct2 = prices.build_price_provider()
+check("factory solo cardtrader -> cardtrader",
+      prov_ct2 is not None and prov_ct2.name == "cardtrader",
+      prov_ct2.name if prov_ct2 else None)
+config.CARDTRADER_TOKEN = ""
+
 # _elegir_con_precios: el primer resultado coincide por código pero sin precios
 # -> debe saltar a otra variante del mismo código que sí tenga cardmarket
 items_mixtos = [

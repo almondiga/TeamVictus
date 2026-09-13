@@ -6,13 +6,19 @@ agregan sus datos:
 
 - BerryWallet (api.pokewallet.io): precios Cardmarket en EUR (trend / avg / low).
   Gratis (100 req/h, 1.000/día). NO ofrece desglose por país.
+- CardTrader (api.cardtrader.com): comparativa España — ofertas de vendedores con
+  país ES e idioma EN en su propio mercado (no es Cardmarket). Cuenta gratuita en
+  cardtrader.com (sin tarjeta; la tarjeta solo se pide para COMPRAR por API).
 - RapidAPI «CardMarket API TCG»: añade `lowest_near_mint_ES` (mínimo near-mint de
   vendedores de España) cuando el dato existe. Plan free: 100 req/día.
 - API oficial de Cardmarket (OAuth1): filtro exacto por idioma inglés y ofertas por
   país. Se mantiene por si el acceso vuelve a abrirse algún día.
 
-Configuración (config.py / .env): PRICE_PROVIDER=auto|berrywallet|rapidapi|cardmarket
-Prioridad en "auto": berrywallet > rapidapi > cardmarket.
+Configuración (config.py / .env):
+PRICE_PROVIDER=auto|berrywallet|rapidapi|cardtrader|cardmarket
+Prioridad en "auto": berrywallet > rapidapi > cardtrader > cardmarket.
+Con BERRYWALLET_API_KEY + CARDTRADER_TOKEN se usa un proveedor híbrido:
+EUR de Cardmarket vía BerryWallet + comparativa España vía CardTrader.
 """
 from __future__ import annotations
 
@@ -57,6 +63,11 @@ def _num(v) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _norm_set(codigo: str) -> str:
+    """'OP-01' / 'OP01' / 'op 01' -> 'OP01' (para emparejar códigos de set)."""
+    return "".join(ch for ch in (codigo or "").upper() if ch.isalnum())
 
 
 def _elegir_mejor(items: list[dict], card_code: str | None, card_name: str) -> dict | None:
@@ -222,6 +233,188 @@ class RapidApiCMProvider(PriceProvider):
 
 
 # ---------------------------------------------------------------------------
+# CardTrader (api.cardtrader.com) — gratis, sin tarjeta, sin captchas.
+# Comparativa España: ofertas de vendedores con country_code ES e idioma EN,
+# en su propio mercado (no es Cardmarket). Cuenta gratuita -> token en Settings.
+# ---------------------------------------------------------------------------
+
+def _es_foil(oferta: dict) -> bool:
+    """Detecta si una oferta de CardTrader es foil (clave de propiedad con 'foil')."""
+    for k, v in (oferta.get("properties_hash") or {}).items():
+        if "foil" in k.lower():
+            return bool(v)
+    return False
+
+
+class CardTraderProvider(PriceProvider):
+    name = "cardtrader"
+
+    BASE = "https://api.cardtrader.com/api/v2"
+
+    def __init__(self, token: str, session: requests.Session | None = None) -> None:
+        self.token = token
+        self.session = session or requests.Session()
+        self._juegos: dict | None = None
+        self._expansiones = _TTLCache(86400)   # 24 h
+        self._blueprints = _TTLCache(86400)    # 24 h
+        self._ofertas_cache = _TTLCache(21600)  # 6 h
+
+    # -- helpers ----------------------------------------------------------
+
+    def _juego_op(self) -> int | None:
+        if self._juegos is None:
+            r = self.session.get(f"{self.BASE}/games",
+                                 headers={"Authorization": f"Bearer {self.token}"},
+                                 timeout=20)
+            r.raise_for_status()
+            self._juegos = r.json() or []
+        for g in self._juegos:
+            if "one piece" in (g.get("name") or "").lower():
+                return g.get("id")
+        return None
+
+    def _expansion_de(self, set_code: str) -> dict | None:
+        norm = _norm_set(set_code)
+        cache_key = f"exp:{norm}"
+        hit = self._expansiones.get(cache_key)
+        if hit is not None:
+            return hit or None
+        juego = self._juego_op()
+        if juego is None:
+            self._expansiones.set(cache_key, None)
+            return None
+        r = self.session.get(f"{self.BASE}/expansions",
+                             headers={"Authorization": f"Bearer {self.token}"},
+                             timeout=30)
+        r.raise_for_status()
+        encontrado = None
+        for e in (r.json() or []):
+            if e.get("game_id") == juego and _norm_set(e.get("code") or "") == norm:
+                encontrado = e
+                break
+        self._expansiones.set(cache_key, encontrado)
+        return encontrado
+
+    def _blueprint_de(self, expansion_id: int, card_name: str, card_code: str) -> dict | None:
+        cache_key = f"bp:{expansion_id}"
+        hit = self._blueprints.get(cache_key)
+        if hit is None:
+            r = self.session.get(f"{self.BASE}/blueprints/export",
+                                 params={"expansion_id": expansion_id},
+                                 headers={"Authorization": f"Bearer {self.token}"},
+                                 timeout=60)
+            r.raise_for_status()
+            lista = r.json() or []
+            self._blueprints.set(cache_key, lista)
+            hit = lista
+        nombre = (card_name or "").strip().upper()
+        codigo = (card_code or "").strip().upper()
+        for bp in hit:
+            n = (bp.get("name") or "").strip().upper()
+            if n == f"{nombre} ({codigo})" or n == nombre:
+                return bp
+        for bp in hit:
+            if codigo and codigo in (bp.get("name") or "").upper():
+                return bp
+        for bp in hit:
+            if nombre and nombre in (bp.get("name") or "").upper():
+                return bp
+        return None
+
+    def _ofertas(self, blueprint_id: int) -> list[dict]:
+        cache_key = f"pr:{blueprint_id}"
+        hit = self._ofertas_cache.get(cache_key)
+        if hit is not None:
+            return hit
+        r = self.session.get(f"{self.BASE}/marketplace/products",
+                             params={"blueprint_id": blueprint_id, "language": "en"},
+                             headers={"Authorization": f"Bearer {self.token}"},
+                             timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        ofertas: list[dict] = []
+        if isinstance(data, dict):
+            for v in data.values():
+                if isinstance(v, list):
+                    ofertas.extend(v)
+        elif isinstance(data, list):
+            ofertas = data
+        self._ofertas_cache.set(cache_key, ofertas)
+        return ofertas
+
+    # -- interfaz ----------------------------------------------------------
+
+    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
+        if not card_code:
+            return PriceResult(provider=self.name,
+                               nota="CardTrader necesita el código de carta (p. ej. OP01-001)")
+        try:
+            set_code = card_code.rsplit("-", 1)[0]  # OP01-001 -> OP01
+            expansion = self._expansion_de(set_code)
+            if not expansion:
+                return PriceResult(provider=self.name,
+                                   nota=f"Set «{set_code}» no encontrado en CardTrader")
+            bp = self._blueprint_de(expansion.get("id"), card_name, card_code)
+            if not bp:
+                return PriceResult(provider=self.name,
+                                   nota=f"«{card_name} ({card_code})» no encontrado en CardTrader")
+            ofertas = self._ofertas(bp.get("id"))
+        except Exception as exc:
+            return PriceResult(provider=self.name, nota=f"Error consultando CardTrader: {exc}")
+
+        es = [o for o in ofertas if (o.get("user") or {}).get("country_code") == "ES"]
+        if not es:
+            return PriceResult(provider=self.name,
+                               nota="Sin vendedores de España en CardTrader para esta carta (idioma EN)")
+
+        no_foil = [o for o in es if not _es_foil(o)]
+        pool = no_foil or es  # prefiere no-foil; si solo hay foil, usa esas
+        precios = [_num((o.get("price") or {}).get("cents")) for o in pool]
+        precios = [p / 100.0 for p in precios if p is not None]
+        if not precios:
+            return PriceResult(provider=self.name, nota="CardTrader sin precios en EUR")
+        es_count = sum(int(o.get("quantity") or 1) for o in pool)
+        link = f"https://www.cardtrader.com/en/cards/{bp.get('id')}"
+        return PriceResult(
+            provider=self.name,
+            es_price=min(precios),
+            es_count=es_count,
+            link=link,
+            nota="CardTrader (mercado propio, no Cardmarket) · mín. vendedores de España, idioma EN",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Híbrido: BerryWallet (EUR Cardmarket) + CardTrader (comparativa España)
+# ---------------------------------------------------------------------------
+
+class HybridProvider(PriceProvider):
+    name = "berrywallet+cardtrader"
+
+    def __init__(self, bw: PriceProvider, ct: PriceProvider) -> None:
+        self.bw = bw
+        self.ct = ct
+
+    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
+        bw = self.bw.get_prices(card_name, card_code)
+        ct = self.ct.get_prices(card_name, card_code)
+        if bw and (bw.trend is not None or bw.avg is not None or bw.low is not None):
+            nota = "EUR: Cardmarket vía BerryWallet"
+            if ct and ct.es_disponible:
+                nota += " · " + ct.nota
+            elif ct and ct.nota:
+                nota += " · " + ct.nota
+            return PriceResult(
+                provider=self.name,
+                trend=bw.trend, avg=bw.avg, low=bw.low, link=bw.link,
+                es_price=ct.es_price if ct else None,
+                es_count=ct.es_count if ct else None,
+                nota=nota,
+            )
+        return ct or bw
+
+
+# ---------------------------------------------------------------------------
 # API oficial de Cardmarket (OAuth1) — solo si el acceso está disponible
 # ---------------------------------------------------------------------------
 
@@ -258,7 +451,11 @@ class CardmarketOfficialProvider(PriceProvider):
 # ---------------------------------------------------------------------------
 
 def build_price_provider() -> tuple[PriceProvider | None, str | None]:
-    """Devuelve (proveedor, error). En modo auto prioriza berrywallet > rapidapi > oficial."""
+    """Devuelve (proveedor, error).
+
+    Modo "auto": berrywallet > rapidapi > cardtrader > oficial; si hay
+    BERRYWALLET_API_KEY y CARDTRADER_TOKEN devuelve el híbrido (EUR + España).
+    """
     mode = (config.PRICE_PROVIDER or "auto").lower()
     candidatos: list[tuple[str, PriceProvider]] = []
 
@@ -269,6 +466,10 @@ def build_price_provider() -> tuple[PriceProvider | None, str | None]:
     def add_rapi():
         if config.RAPIDAPI_KEY:
             candidatos.append(("rapidapi", RapidApiCMProvider(config.RAPIDAPI_KEY)))
+
+    def add_ct():
+        if config.CARDTRADER_TOKEN:
+            candidatos.append(("cardtrader", CardTraderProvider(config.CARDTRADER_TOKEN)))
 
     def add_oficial():
         if all([config.CARDMARKET_APP_TOKEN, config.CARDMARKET_APP_SECRET,
@@ -281,11 +482,14 @@ def build_price_provider() -> tuple[PriceProvider | None, str | None]:
     if mode == "auto":
         add_berry()
         add_rapi()
+        add_ct()
         add_oficial()
     elif mode == "berrywallet":
         add_berry()
     elif mode == "rapidapi":
         add_rapi()
+    elif mode == "cardtrader":
+        add_ct()
     elif mode == "cardmarket":
         add_oficial()
     else:
@@ -296,6 +500,12 @@ def build_price_provider() -> tuple[PriceProvider | None, str | None]:
             "No hay proveedor de precios configurado (la API oficial de Cardmarket está "
             "cerrada a nuevas altas). Configura en el .env:\n"
             "• BERRYWALLET_API_KEY → precios Cardmarket EUR (gratis)\n"
-            "• RAPIDAPI_KEY → añade comparativa por país España (plan free RapidAPI)"
+            "• CARDTRADER_TOKEN → comparativa España (cuenta gratis en cardtrader.com, sin tarjeta)"
         )
+
+    nombres = [n for n, _ in candidatos]
+    if "berrywallet" in nombres and "cardtrader" in nombres:
+        bw = next(p for n, p in candidatos if n == "berrywallet")
+        ct = next(p for n, p in candidatos if n == "cardtrader")
+        return HybridProvider(bw, ct), None
     return candidatos[0][1], None

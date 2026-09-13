@@ -39,6 +39,7 @@ LOCAL_DB_PATH = os.getenv("LOCAL_DB_PATH", "optcg_cards.db")
 PRICES_ENABLED = os.getenv("PRICES_ENABLED", "0") == "1"
 PRICE_PROVIDER = os.getenv("PRICE_PROVIDER", "auto")
 BERRYWALLET_API_KEY = os.getenv("BERRYWALLET_API_KEY", "")  # gratis: pokewallet.io/dashboard
+CARDTRADER_TOKEN = os.getenv("CARDTRADER_TOKEN", "")        # gratis: cardtrader.com (Settings -> API)
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")                # RapidAPI "CardMarket API TCG" (free 100/día, añade España)
 
 # --- Parámetros Cardmarket (solo si algún día vuelve el acceso oficial) ---
