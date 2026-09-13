@@ -1,7 +1,8 @@
 """Base de datos SQLite: préstamos de cartas y colecciones.
 
-Los datos están aislados por servidor (guild_id) y por usuario (owner_id),
-lo que permite que el bot funcione en varios servidores sin mezclar nada.
+Los préstamos son GLOBALES: se ven en todos los servidores donde esté el bot
+(la columna guild_id solo guarda dónde se creó el préstamo). Las colecciones
+siguen aisladas por servidor (guild_id + owner_id), para no mezclar usuarios.
 """
 import os
 import sqlite3
@@ -57,8 +58,10 @@ def init_db() -> None:
 
 # ----------------------------- Préstamos -----------------------------
 
-def add_loan(guild_id: int, lender_id: int, borrower_id: int,
+def add_loan(guild_id: int | None, lender_id: int, borrower_id: int,
              card_code: str, card_name: str, note: str | None = None) -> int:
+    """Registra un préstamo. guild_id es informativo (dónde se creó); el préstamo
+    es global y se ve en todos los servidores."""
     conn = get_conn()
     cur = conn.execute(
         "INSERT INTO loans (guild_id, lender_id, borrower_id, card_code, card_name, note) "
@@ -69,53 +72,54 @@ def add_loan(guild_id: int, lender_id: int, borrower_id: int,
     return cur.lastrowid
 
 
-def return_loan(guild_id: int, loan_id: int, user_id: int) -> bool:
-    """Marca como devuelto un préstamo. Solo quien prestó o quien recibió puede devolverlo."""
+def return_loan(loan_id: int, user_id: int) -> bool:
+    """Marca como devuelto un préstamo (global). Solo quien prestó o quien recibió
+    puede devolverlo, esté en el servidor que esté."""
     conn = get_conn()
     cur = conn.execute(
         "UPDATE loans SET returned_at = datetime('now') "
-        "WHERE id = ? AND guild_id = ? AND returned_at IS NULL "
+        "WHERE id = ? AND returned_at IS NULL "
         "AND (lender_id = ? OR borrower_id = ?)",
-        (loan_id, guild_id, user_id, user_id),
+        (loan_id, user_id, user_id),
     )
     conn.commit()
     return cur.rowcount > 0
 
 
-def return_loans_by_pair(guild_id: int, card_code: str, p1: int, p2: int) -> int:
-    """Marca como devueltos los préstamos activos de una carta entre dos personas
-    (da igual el orden: p1 presta a p2, o p2 presta a p1)."""
+def return_loans_by_pair(card_code: str, p1: int, p2: int) -> int:
+    """Marca como devueltos los préstamos activos (globales) de una carta entre dos
+    personas (da igual el orden: p1 presta a p2, o p2 presta a p1)."""
     conn = get_conn()
     cur = conn.execute(
         "UPDATE loans SET returned_at = datetime('now') "
-        "WHERE guild_id = ? AND card_code = ? AND returned_at IS NULL "
+        "WHERE card_code = ? AND returned_at IS NULL "
         "AND ((lender_id = ? AND borrower_id = ?) OR (lender_id = ? AND borrower_id = ?))",
-        (guild_id, card_code, p1, p2, p2, p1),
+        (card_code, p1, p2, p2, p1),
     )
     conn.commit()
     return cur.rowcount
 
 
-def return_loans_of_user(guild_id: int, card_code: str, user_id: int) -> int:
-    """Marca como devueltos los préstamos activos de una carta donde el usuario
-    es parte (la prestó o la recibió). Útil para /devolver sin especificar la otra parte."""
+def return_loans_of_user(card_code: str, user_id: int) -> int:
+    """Marca como devueltos los préstamos activos (globales) de una carta donde el
+    usuario es parte (la prestó o la recibió). Útil para /devolver sin la otra parte."""
     conn = get_conn()
     cur = conn.execute(
         "UPDATE loans SET returned_at = datetime('now') "
-        "WHERE guild_id = ? AND card_code = ? AND returned_at IS NULL "
+        "WHERE card_code = ? AND returned_at IS NULL "
         "AND (lender_id = ? OR borrower_id = ?)",
-        (guild_id, card_code, user_id, user_id),
+        (card_code, user_id, user_id),
     )
     conn.commit()
     return cur.rowcount
 
 
-def list_loans(guild_id: int, *, user_id: int | None = None,
+def list_loans(*, user_id: int | None = None,
                lender_id: int | None = None, borrower_id: int | None = None,
                active_only: bool = True, limit: int = 50):
     conn = get_conn()
-    sql = "SELECT * FROM loans WHERE guild_id = ?"
-    args: list = [guild_id]
+    sql = "SELECT * FROM loans WHERE 1=1"
+    args: list = []
     if active_only:
         sql += " AND returned_at IS NULL"
     if user_id is not None:

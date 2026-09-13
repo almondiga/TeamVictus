@@ -17,7 +17,7 @@ Bot en español para servidores de Discord que busca cartas de *One Piece Card G
 | `/precio carta:<código o nombre>` | **Deshabilitado** por ahora (no hay API de precios). |
 | `/prestar carta:<...> a:<@usuario> [prestador:@quien_presta] nota?` | Registra una carta prestada: quien presta es quien ejecuta el comando (o `prestador:` si lo hace por otra persona). |
 | `/devolver id:<ID>` o `carta:<código> a:<@usuario> [devuelve:@quien]` | Marca préstamo(s) como devueltos; quien devuelve es quien ejecuta (o `devuelve:`). |
-| `/prestamos [usuario] [historial]` | Lista los préstamos activos (o historial) del servidor. |
+| `/prestamos [usuario] [historial]` | Lista los préstamos activos (o historial). Son **globales**: se ven desde todos los servidores donde esté el bot. |
 | `/listado [set] [nombre] [color] [categoría] [rareza] [número] [poder_min] [poder_max] [orden]` | Listado de cartas con cualquier combinación de filtros; las imágenes salen en **cuadrícula en grande**, paginada con botones. |
 | `/coleccion add|remove|ver` | Gestiona tu colección (la de otros usuarios también se puede ver y filtrar). |
 | `/importar archivo:<CSV>` | Importa colección desde CSV (`card_code,card_name,qty`). |
@@ -202,7 +202,7 @@ python test_smoke.py       # carga el bot y los 10 comandos sin conectar a Disco
 ```
 bot.py               -> entrada, registro de cogs y sincronización global de comandos
 config.py            -> lee el .env
-db.py                -> SQLite (préstamos y colecciones, aislados por servidor y usuario)
+db.py                -> SQLite (préstamos globales entre servidores; colecciones aisladas por servidor y usuario)
 carddata.py          -> datos de cartas: catálogo local (SQLite) / optcg-api / BerryWallet
 prices.py            -> proveedores de precios: BerryWallet / RapidAPI (España) / API oficial
 cardmarket.py        -> cliente de la API oficial de Cardmarket (OAuth1), usado por prices.py
