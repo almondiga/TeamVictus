@@ -207,6 +207,27 @@ check("variante _p1 consulta por código base",
 res_rep = prov_par.get_prices("Roronoa Zoro", "OP01-001_r1")
 check("variante _r1 -> cae a Normal", res_rep.trend == 2.41, getattr(res_rep, "trend", None))
 
+# varios artes AA (p. ej. OP13-118): la variante _p prefiere el listado
+# Super Alternate Art (no el Parallel)
+payload_multi_aa = {"data": [
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118)", "sub_type_name": "Foil",
+     "cardmarket": {"prices": {"trend": 11.08, "avg": 21.55, "low": 9.0}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Red Super Alternate Art)",
+     "sub_type_name": "Foil",
+     "cardmarket": {"prices": {"trend": 23227.76, "avg": 25000.0, "low": 14999.99}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Super Alternate Art)",
+     "sub_type_name": "Foil",
+     "cardmarket": {"prices": {"trend": 3384.02, "avg": 3829.2, "low": 1099.0}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Parallel)",
+     "sub_type_name": "Foil",
+     "cardmarket": {"prices": {"trend": 82.15, "avg": 86.98, "low": 69.9}}},
+]}
+sess_maa = FakeSession(payload_multi_aa)
+prov_maa = prices.BerryWalletProvider("clave_test", session=sess_maa)
+res_maa = prov_maa.get_prices("Monkey.D.Luffy", "OP13-118_p1")
+check("variante AA con varios artes -> Super Alternate Art",
+      res_maa and res_maa.trend == 3384.02, getattr(res_maa, "trend", None))
+
 # --- CardTrader: comparativa España (mercado propio, gratis sin tarjeta) ---
 class FakeRouteSession:
     def __init__(self, rutas):

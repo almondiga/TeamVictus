@@ -351,7 +351,40 @@ class FichaView(discord.ui.View):
         etiqueta = variante_nombre(card, self.variantes)
         embed.set_footer(
             text=f"Variante {indice + 1}/{len(self.variantes)} · {etiqueta}")
+        await self._anotar_cotizacion_compartida(indice, precio, embed)
         return embed, archivos
+
+    async def _anotar_cotizacion_compartida(self, indice: int,
+                                            precio: PriceResult | None,
+                                            embed: discord.Embed) -> None:
+        """Si varias variantes del mismo tipo comparten cotización (los proveedores no
+        distinguen los artes individuales), lo indica en el footer para que no parezca
+        que el precio «no se actualiza»."""
+        try:
+            if precio is None or precio.trend is None:
+                return
+            card = self.variantes[indice]
+            tipo = ((card.get("variant_type") or "").strip()
+                    or (card.get("finish") or "").strip())
+            if not tipo:
+                return
+            hermanos = [i for i, v in enumerate(self.variantes)
+                        if i != indice and ((v.get("variant_type") or "").strip()
+                                            or (v.get("finish") or "").strip()) == tipo]
+            if not hermanos:
+                return
+            mismo = 1
+            for i in hermanos:
+                p, _ = await self._precio_indice(i)
+                if p and p.trend == precio.trend:
+                    mismo += 1
+            if mismo == len(hermanos) + 1 and mismo >= 2:
+                viejo = embed.footer.text or ""
+                embed.set_footer(
+                    text=f"{viejo}\n⚠️ Las {mismo} variantes «{tipo}» comparten "
+                         "cotización (no se distinguen los artes individuales).")
+        except Exception:
+            pass
 
     async def _mostrar(self, interaction: discord.Interaction, indice: int) -> None:
         # ACK inmediato: Discord exige responder en <=3 s

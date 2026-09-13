@@ -128,24 +128,39 @@ def _elegir_con_precios(items: list[dict], card_code: str | None, card_name: str
 
 
 def _elegir_paralela(items: list[dict], card_code: str | None, card_name: str) -> dict | None:
-    """Para una variante paralela / Alternate Art: prefiere el item con precios cuyo
-    nombre o sub_tipo indique paralela (p. ej. 'Roronoa Zoro (001) (Parallel)'),
-    porque BerryWallet lista la paralela como otra variante con precios propios.
-    Si no hay datos de paralela, cae a la selección normal."""
+    """Para una variante paralela / Alternate Art: prefiere el listado de Cardmarket
+    que representa mejor el arte de la variante.
+
+    Prioridad de marcadores en el nombre del item:
+      Super Alternate Art > Alternate Art > Red Super Alternate Art >
+      Wanted Poster > Parallel.
+    BerryWallet lista los artes alternativos como variantes con precios propios;
+    si no hay datos de arte, cae a la selección normal.
+    """
     if not items:
         return None
 
-    def es_paralela(it: dict) -> bool:
+    def marca(it: dict) -> int:
         nombre = (it.get("name") or "").lower()
+        if "super alternate art" in nombre and "red super" not in nombre:
+            return 6
+        if "red super alternate art" in nombre:
+            return 5
+        if "alternate art" in nombre:
+            return 4
+        if "wanted poster" in nombre:
+            return 3
+        if "(parallel)" in nombre:
+            return 2
         sub = (it.get("sub_type_name") or "").lower()
-        return ("(parallel)" in nombre or "(alternate art)" in nombre
-                or sub in ("foil", "parallel"))
+        if sub in ("foil", "parallel"):
+            return 1
+        return -1
 
     con_precios = [it for it in items
-                   if es_paralela(it) and (it.get("cardmarket") or {}).get("prices")]
+                   if marca(it) >= 1 and (it.get("cardmarket") or {}).get("prices")]
     if con_precios:
-        # prefiere la marcada como (Parallel)
-        con_precios.sort(key=lambda x: 0 if "(parallel)" in (x.get("name") or "").lower() else 1)
+        con_precios.sort(key=marca, reverse=True)
         return con_precios[0]
     return _elegir_con_precios(items, card_code, card_name)
 
