@@ -21,7 +21,8 @@ from discord.ext import commands
 import requests
 
 import config
-from carddata import CardData, CardDataFallback, build_card_data, normalize_code
+from carddata import (CardData, CardDataFallback, build_card_data, normalize_code,
+                      variante_nombre)
 from cogs.listing import GridView
 from prices import PriceResult, build_price_provider, URL_MKM_SEARCH
 
@@ -180,15 +181,41 @@ class SearchCog(commands.Cog):
 
     async def _enviar_carta(self, interaction: discord.Interaction, card: dict,
                             editar: bool = False) -> None:
-        """Envía (o edita el mensaje actual con) la ficha completa de una carta."""
+        """Envía (o edita el mensaje actual con) la ficha completa de una carta.
+
+        Si la carta tiene variantes (Normal, Alternate Art, Reprint...), añade un
+        paginador ◀ Variante ▶ para recorrerlas, reutilizando los mismos precios.
+        """
         precio, precio_error = await self._precio_para(card)
-        embed, archivos, _ = await self._embed_carta(card, precio, precio_error)
+
+        vista = None
+        fn = getattr(self.cards, "variants_of", None)
+        if fn:
+            try:
+                variantes = await asyncio.to_thread(fn, card.get("id") or "")
+            except Exception:
+                variantes = None
+            if variantes and len(variantes) > 1:
+                vista = FichaView(self, variantes, precio, precio_error)
+                for i, v in enumerate(variantes):
+                    if (v.get("id") or "").upper() == (card.get("id") or "").upper():
+                        vista.indice = i
+                        break
+                vista._actualizar_botones()
+                embed, archivos = await vista._embed_indice(vista.indice)
+            else:
+                embed, archivos, _ = await self._embed_carta(card, precio, precio_error)
+        else:
+            embed, archivos, _ = await self._embed_carta(card, precio, precio_error)
+
         if editar:
             # siempre se llama tras interaction.response.defer() (selector del listado)
             await interaction.edit_original_response(
-                content=None, embed=embed, attachments=archivos, view=None)
+                content=None, embed=embed, attachments=archivos, view=vista)
         else:
-            await interaction.followup.send(embed=embed, files=archivos)
+            msg = await interaction.followup.send(embed=embed, files=archivos, view=vista)
+            if vista:
+                vista.message = msg
 
     # ------------------------------------------------------------------
 
@@ -274,6 +301,69 @@ class BuscarResultadosView(GridView):
                 attachments=[], view=None)
             return
         await self.cog._enviar_carta(interaction, card, editar=True)
+
+
+# ----------------------------- variantes de una carta -----------------------------
+
+class FichaView(discord.ui.View):
+    """Paginador de variantes de una carta en /buscar: ◀ Variante ▶ cambia la
+    imagen y el código (Normal, Alternate Art, Reprint...) manteniendo los precios."""
+
+    def __init__(self, cog: SearchCog, variantes: list[dict],
+                 precio: PriceResult | None, precio_error: str | None) -> None:
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.variantes = variantes
+        self.precio = precio
+        self.precio_error = precio_error
+        self.indice = 0
+        self._actualizar_botones()
+
+    def _actualizar_botones(self) -> None:
+        self.prev.disabled = self.indice <= 0
+        self.next.disabled = self.indice >= len(self.variantes) - 1
+
+    async def _embed_indice(self, indice: int) -> tuple[discord.Embed, list[discord.File]]:
+        card = self.variantes[indice]
+        embed, archivos, _ = await self.cog._embed_carta(card, self.precio, self.precio_error)
+        etiqueta = variante_nombre(card, self.variantes)
+        embed.set_footer(
+            text=f"Variante {indice + 1}/{len(self.variantes)} · {etiqueta}")
+        return embed, archivos
+
+    async def _mostrar(self, interaction: discord.Interaction, indice: int) -> None:
+        # ACK inmediato: Discord exige responder en <=3 s
+        await interaction.response.defer()
+        try:
+            if indice < 0 or indice >= len(self.variantes):
+                return
+            self.indice = indice
+            self._actualizar_botones()
+            embed, archivos = await self._embed_indice(indice)
+            await interaction.edit_original_response(
+                content=None, embed=embed, attachments=archivos, view=self)
+        except Exception:
+            pass
+
+    @discord.ui.button(label="◀ Variante", style=discord.ButtonStyle.secondary, row=0)
+    async def prev(self, interaction: discord.Interaction,
+                   button: discord.ui.Button) -> None:
+        await self._mostrar(interaction, self.indice - 1)
+
+    @discord.ui.button(label="Variante ▶", style=discord.ButtonStyle.secondary, row=0)
+    async def next(self, interaction: discord.Interaction,
+                   button: discord.ui.Button) -> None:
+        await self._mostrar(interaction, self.indice + 1)
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            child.disabled = True
+        if getattr(self, "message", None) is None:
+            return
+        try:
+            await self.message.edit(view=self)
+        except Exception:
+            pass
 
 
 # ----------------------------- utilidades -----------------------------

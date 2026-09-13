@@ -417,6 +417,11 @@ class CardDataLocal:
             "image_url": r["image_url"],
             "price": None,  # los precios los aporta el proveedor de precios (BerryWallet)
             "sets": [{"id": s["id"], "label": s["label"], "pack_id": s["pack_id"]}],
+            # variantes (para el paginador de /buscar)
+            "base_id": r["base_id"],
+            "parallel": r["parallel"],
+            "variant_type": r["variant_type"],
+            "finish": r["finish"],
         }
 
     # ----------------------------- búsqueda -----------------------------
@@ -451,7 +456,12 @@ class CardDataLocal:
 
     def search_cards(self, text: str, limit: int = 25) -> list[dict]:
         """Búsqueda tokenizada por código o nombre: 'op01' o 'luffy' devuelven un
-        listado de coincidencias parciales (tolerante a puntos y espacios)."""
+        listado de coincidencias parciales (tolerante a puntos y espacios).
+
+        Se deduplican las variantes de una misma carta (Normal, Alternate Art,
+        Reprint...): en la cuadrícula sale una entrada por carta y las variantes
+        se recorren con el paginador de la ficha (ver variants_of).
+        """
         t = (text or "").strip()
         if not t:
             return []
@@ -463,7 +473,28 @@ class CardDataLocal:
                   OR replace(lower(name), '.', '') LIKE ?
                   OR replace(lower(id), '.', '') LIKE ?
                ORDER BY id ASC LIMIT ?""",
-            (f"%{t}%", f"%{t}%", f"%{nl}%", f"%{nl}%", limit)).fetchall()
+            (f"%{t}%", f"%{t}%", f"%{nl}%", f"%{nl}%", limit * 2)).fetchall()
+        cartas = [self._fila_a_carta(r) for r in rows]
+        unicas: dict[str, dict] = {}
+        for c in cartas:
+            clave = c.get("base_id") or c.get("id")
+            viejo = unicas.get(clave)
+            if viejo is None or ((c.get("parallel") or 0), c["id"]) < \
+                    ((viejo.get("parallel") or 0), viejo["id"]):
+                unicas[clave] = c
+        return list(unicas.values())[:limit]
+
+    def variants_of(self, card_id: str) -> list[dict]:
+        """Todas las variantes de una carta (Normal, Alternate Art, Reprint...),
+        la base primero. Alimenta el paginador de variantes de la ficha de /buscar.
+        """
+        cid = (card_id or "").upper()
+        base = re.sub(r"_[pr]\d+$", "", cid, flags=re.IGNORECASE)
+        rows = self._execute(
+            """SELECT * FROM cards
+               WHERE base_id = ? OR id = ? OR id LIKE ? ESCAPE '\\'
+               ORDER BY parallel ASC, id ASC""",
+            (base, base, base + r"\_%")).fetchall()
         return [self._fila_a_carta(r) for r in rows]
 
     # ----------------------------- listado con filtros -----------------------------
@@ -542,6 +573,28 @@ def _mejor_variante(a: dict, b: dict) -> bool:
         con_precio = 1 if c.get("price") is not None else 0
         return (normal, con_precio)
     return p(a) > p(b)
+
+
+def _etiqueta_base_variante(card: dict) -> str:
+    """Etiqueta sin numerar de una variante: 'Normal', 'Alternate Art', 'Reprint'..."""
+    vt = (card.get("variant_type") or "").strip()
+    finish = (card.get("finish") or "").strip()
+    if vt:
+        return vt
+    if finish:
+        return "Normal" if finish.lower() == "standard" else finish.capitalize()
+    return "Paralela" if card.get("parallel") else "Normal"
+
+
+def variante_nombre(card: dict, variantes: list[dict] | None = None) -> str:
+    """Etiqueta legible de una variante. Si hay varias con la misma etiqueta
+    (p. ej. Alternate Art 1/2/3), añade el número del sufijo _p1/_p2/..."""
+    etiqueta = _etiqueta_base_variante(card)
+    if variantes and sum(1 for v in variantes if _etiqueta_base_variante(v) == etiqueta) > 1:
+        m = re.search(r"_([pr])(\d+)$", (card.get("id") or ""))
+        if m:
+            etiqueta += f" {m.group(2)}"
+    return etiqueta
 
 
 def build_card_data() -> CardData | CardDataLocal | CardDataBerry | CardDataFallback:

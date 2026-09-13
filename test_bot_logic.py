@@ -352,23 +352,24 @@ _conn.executescript("""
 """)
 _conn.execute("INSERT INTO sets VALUES ('OP-01','550101','Romance Dawn [OP-01]',121)")
 _conn.executemany(
-    """INSERT INTO cards (id, parallel, name, set_id, rarity, category, colors,
-                          cost, power, types, image_url)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+    """INSERT INTO cards (id, base_id, parallel, variant_type, finish, name, set_id,
+                          rarity, category, colors, cost, power, types, image_url)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
     [
-        ("OP01-001", 0, "Roronoa Zoro", "OP-01", "Leader", "Leader",
+        ("OP01-001", None, 0, None, "standard", "Roronoa Zoro", "OP-01", "Leader", "Leader",
          _json.dumps(["Red"]), 5, 5000, _json.dumps(["Supernovas", "Straw Hat Crew"]),
          "https://en.onepiece-cardgame.com/images/cardlist/card/OP01-001.png"),
-        ("OP01-001_p1", 1, "Roronoa Zoro", "OP-01", "Leader", "Leader",
+        ("OP01-001_p1", "OP01-001", 1, "Alternate Art", "textured", "Roronoa Zoro",
+         "OP-01", "Leader", "Leader",
          _json.dumps(["Red"]), 5, 5000, None,
          "https://en.onepiece-cardgame.com/images/cardlist/card/OP01-001_p1.png"),
-        ("OP01-002", 0, "Monkey.D.Luffy", "OP-01", "Rare", "Character",
+        ("OP01-002", None, 0, None, "standard", "Monkey.D.Luffy", "OP-01", "Rare", "Character",
          _json.dumps(["Red"]), 4, 6000, None,
          "https://en.onepiece-cardgame.com/images/cardlist/card/OP01-002.png"),
-        ("EB01-001", 0, "Nami", "EB-01", "Common", "Character",
+        ("EB01-001", None, 0, None, "standard", "Nami", "EB-01", "Common", "Character",
          _json.dumps(["Blue"]), 2, 3000, None,
          "https://en.onepiece-cardgame.com/images/cardlist/card/EB01-001.png"),
-        ("OP02-001", 0, "Edward.Newgate", "OP-02", "Rare", "Character",
+        ("OP02-001", None, 0, None, "standard", "Edward.Newgate", "OP-02", "Rare", "Character",
          _json.dumps(["Red"]), 5, 7000, _json.dumps(["Whitebeard Pirates"]),
          "https://en.onepiece-cardgame.com/images/cardlist/card/OP02-001.png"),
     ])
@@ -399,16 +400,29 @@ check("local listado por nombre (sin set)", len(lst4) == 1 and lst4[0]["id"] == 
 
 # --- tokenizado: search_cards ---
 t1 = cdl.search_cards("op01")
-check("token 'op01' -> coincidencias del set OP-01",
-      len(t1) >= 3 and all(c["id"].startswith("OP01") for c in t1))
+check("token 'op01' -> cartas únicas del set OP-01 (variantes deduplicadas)",
+      len(t1) == 2 and all(c["id"].startswith("OP01") for c in t1))
 t2 = cdl.search_cards("luffy")
 check("token 'luffy' -> Monkey.D.Luffy (tolerante a puntos)",
       any(c["id"] == "OP01-002" for c in t2))
 t3 = cdl.search_cards("OP01-00")
-check("token código parcial 'OP01-00'",
-      any(c["id"] == "OP01-001" for c in t3) and any(c["id"] == "OP01-001_p1" for c in t3))
+check("token código parcial 'OP01-00' (base única, sin duplicar variante)",
+      any(c["id"] == "OP01-001" for c in t3)
+      and all(not c["id"].startswith("OP01-001_") for c in t3))
 t4 = cdl.search_cards("")
 check("token vacío -> []", t4 == [])
+
+# --- variantes: paginador de la ficha de /buscar ---
+from carddata import variante_nombre
+v1 = cdl.variants_of("OP01-001")
+check("variantes_of: base primero", len(v1) == 2 and v1[0]["id"] == "OP01-001"
+      and v1[0]["parallel"] == 0)
+check("variantes_of: incluye Alternate Art", v1[1]["id"] == "OP01-001_p1")
+check("variantes_of: busca por id de variante", len(cdl.variants_of("OP01-001_p1")) == 2)
+check("variante_nombre base", variante_nombre(v1[0], v1) == "Normal")
+check("variante_nombre Alternate Art", variante_nombre(v1[1], v1) == "Alternate Art")
+check("variantes sin variantes -> solo la propia",
+      len(cdl.variants_of("OP02-001")) == 1)
 
 # --- filtro de tipo (arquetipos) ---
 tt1 = cdl.list_cards(tipo="supernovas")
