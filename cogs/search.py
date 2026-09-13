@@ -112,9 +112,13 @@ class SearchCog(commands.Cog):
     async def _embed_carta(self, card: dict, precio: PriceResult | None,
                            precio_error: str | None) -> tuple[discord.Embed, list[discord.File], str | None]:
         """Construye el embed de una carta (imagen + campos + precios)."""
+        desc = f"`{card.get('id', '?')}`"
+        tipos = ", ".join(card["types"]) if card.get("types") else None
+        if tipos:
+            desc += f" · {tipos[:100]}"
         embed = discord.Embed(
             title=f"{card.get('name', '?')}",
-            description=f"`{card.get('id', '?')}`",
+            description=desc,
             color=config.COLOR_PRIMARY,
         )
         sets = card.get("sets") or []
@@ -125,9 +129,6 @@ class SearchCog(commands.Cog):
         embed.add_field(name="Categoría", value=card.get("category") or "—", inline=True)
         if card.get("color") is None and colors != "—":
             embed.add_field(name="Color", value=colors, inline=True)
-        tipos = ", ".join(card["types"]) if card.get("types") else None
-        if tipos:
-            embed.add_field(name="Tipo", value=tipos[:100], inline=True)
         if card.get("cost") is not None or card.get("power") is not None:
             embed.add_field(
                 name="Coste / Poder",
