@@ -24,23 +24,15 @@ class LoansCog(commands.Cog):
 
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="prestar", description="Registra una carta que prestas (o que presta otra persona)")
+    @app_commands.command(name="prestar", description="Registra una carta que has prestado")
     @app_commands.describe(
         carta="Código (OP01-001) o nombre de la carta prestada",
-        a="¿A quién se la presta? (quien la recibe)",
-        prestador="Quién presta la carta (por defecto: tú)",
+        a="¿A quién se la has prestado?",
         nota="Nota opcional (fecha de devolución pactada, etc.)",
     )
     async def prestar(self, interaction: discord.Interaction,
-                      carta: str, a: discord.Member,
-                      prestador: discord.Member | None = None,
-                      nota: str | None = None) -> None:
+                      carta: str, a: discord.Member, nota: str | None = None) -> None:
         await interaction.response.defer(ephemeral=False)
-        presta = prestador or interaction.user
-        if a.id == presta.id:
-            await interaction.followup.send("🤔 No puedes prestarte una carta a ti mismo.", ephemeral=True)
-            return
-
         try:
             card = await asyncio.to_thread(self.cards.resolve_card, carta)
         except Exception as exc:
@@ -53,8 +45,12 @@ class LoansCog(commands.Cog):
                 f"pero dime el código exacto (p. ej. OP01-001).", ephemeral=True)
             return
 
+        if a.id == interaction.user.id:
+            await interaction.followup.send("🤔 No puedes prestarte una carta a ti mismo.", ephemeral=True)
+            return
+
         loan_id = await asyncio.to_thread(
-            db.add_loan, interaction.guild_id, presta.id, a.id,
+            db.add_loan, interaction.guild_id, interaction.user.id, a.id,
             card["id"] or carta, card.get("name") or carta, nota)
         embed = discord.Embed(
             title="📤 Préstamo registrado",
@@ -62,7 +58,7 @@ class LoansCog(commands.Cog):
             description=f"`{card.get('id', carta)}` **{card.get('name', carta)}**",
         )
         embed.add_field(name="Prestada a", value=a.mention, inline=True)
-        embed.add_field(name="Prestada por", value=presta.mention, inline=True)
+        embed.add_field(name="Prestada por", value=interaction.user.mention, inline=True)
         if nota:
             embed.add_field(name="Nota", value=nota, inline=False)
         embed.set_footer(text=f"ID del préstamo: #{loan_id} · usa /devolver id:{loan_id} al recuperarla")
@@ -73,15 +69,13 @@ class LoansCog(commands.Cog):
     @app_commands.command(name="devolver", description="Marca un préstamo como devuelto")
     @app_commands.describe(
         id="ID del préstamo (lo ves en /prestamos o al prestar)",
-        carta="Código o nombre de la carta devuelta",
-        a="La otra parte del préstamo (a quien se devuelve la carta)",
-        devuelve="Quién devuelve la carta (por defecto: tú)",
+        carta="Alternativa: código de la carta devuelta",
+        a="Alternativa: usuario que la devuelve (si usas el filtro por carta)",
     )
     async def devolver(self, interaction: discord.Interaction,
                        id: int | None = None,
                        carta: str | None = None,
-                       a: discord.Member | None = None,
-                       devuelve: discord.Member | None = None) -> None:
+                       a: discord.Member | None = None) -> None:
         if id is not None:
             ok = await asyncio.to_thread(db.return_loan, interaction.guild_id, id, interaction.user.id)
             if not ok:
@@ -93,6 +87,7 @@ class LoansCog(commands.Cog):
             return
 
         if carta:
+            code = None
             from carddata import normalize_code
             code = normalize_code(carta)
             if not code:
@@ -102,37 +97,16 @@ class LoansCog(commands.Cog):
                 await interaction.response.send_message(
                     f"❌ No pude identificar el código de «{carta}». Usa el ID del préstamo.", ephemeral=True)
                 return
-
-            quien = devuelve or interaction.user  # quién devuelve (por defecto, quien ejecuta)
-
-            if a is not None:
-                if a.id == quien.id:
-                    await interaction.response.send_message(
-                        "🤔 La otra parte y quien devuelve no pueden ser la misma persona.", ephemeral=True)
-                    return
-                n = await asyncio.to_thread(
-                    db.return_loans_by_pair, interaction.guild_id, code, a.id, quien.id)
-                if n == 0:
-                    await interaction.response.send_message(
-                        f"❌ No hay préstamos activos de `{code}` entre {a.mention} y {quien.mention}.",
-                        ephemeral=True)
-                    return
-                await interaction.response.send_message(
-                    f"✅ {n} préstamo(s) de `{code}` entre {a.mention} y {quien.mention} "
-                    f"marcados como devueltos.", ephemeral=False)
-                return
-
-            # sin 'a': se devuelven las cartas de las que el que devuelve es parte
+            target = a.id if a else interaction.user.id
             n = await asyncio.to_thread(
-                db.return_loans_of_user, interaction.guild_id, code, quien.id)
+                db.return_loans_by_card, interaction.guild_id, code, target, interaction.user.id)
             if n == 0:
                 await interaction.response.send_message(
-                    f"❌ No hay préstamos activos de `{code}` en los que {quien.mention} sea parte.",
+                    f"❌ No hay préstamos activos de `{code}` a {a.mention if a else 'ti'} de los que seas parte.",
                     ephemeral=True)
                 return
-            await interaction.response.send_message(
-                f"✅ {n} préstamo(s) de `{code}` de {quien.mention} marcados como devueltos.",
-                ephemeral=False)
+            await interaction.response.send_message(f"✅ {n} préstamo(s) de `{code}` devueltos.",
+                                                    ephemeral=False)
             return
 
         await interaction.response.send_message(
@@ -171,7 +145,7 @@ class LoansCog(commands.Cog):
                 value=f"{lender.mention if lender else row['lender_id']} → "
                       f"{borrower.mention if borrower else row['borrower_id']} · "
                       f"{row['lent_at'][:10]} · {estado}"
-                      + (f"\n📝 {row['note']}" if row.get("note") else ""),
+                      + (f"\n📝 {row['note']}" if row["note"] else ""),
                 inline=False,
             )
         embed.set_footer(text="Para devolver: /devolver id:<ID>")
