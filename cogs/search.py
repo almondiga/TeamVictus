@@ -1,4 +1,9 @@
-"""Comando /buscar: imagen + datos de la carta.
+"""Comando /buscar: imagen y datos de la carta, con búsqueda tokenizada.
+
+- Código exacto (OP01-001, ST01-001...) -> ficha directa de esa carta.
+- Cualquier otro texto ('op01', 'luffy', nombre parcial) -> búsqueda tokenizada
+  de coincidencias: si hay varias, se muestran en una cuadrícula con imágenes
+  (paginada) más un selector para abrir la ficha de la que quieras.
 
 Los precios están deshabilitados por ahora (no hay API de precios disponible:
 la API oficial de Cardmarket está cerrada a nuevas altas). Cuando haya un
@@ -16,10 +21,13 @@ from discord.ext import commands
 import requests
 
 import config
-from carddata import CardData, CardDataFallback, build_card_data
+from carddata import CardData, CardDataFallback, build_card_data, normalize_code
+from cogs.listing import GridView
 from prices import PriceResult, build_price_provider, URL_MKM_SEARCH
 
 URL_MKM_SEARCH = URL_MKM_SEARCH
+
+MAX_COINCIDENCIAS = 25  # tope de coincidencias en la cuadrícula / selector
 
 
 class SearchCog(commands.Cog):
@@ -37,35 +45,73 @@ class SearchCog(commands.Cog):
         name="buscar",
         description="Busca una carta por código o nombre: imagen y datos de la carta",
     )
-    @app_commands.describe(carta="Código (OP01-001, ST01-001...) o nombre de la carta")
+    @app_commands.describe(carta="Código (OP01-001, ST01-001...), nombre o token (op01, luffy)")
     async def buscar(self, interaction: discord.Interaction, carta: str) -> None:
         await interaction.response.defer(ephemeral=False)
+
+        # Código completo (OP01-001) -> ficha directa si existe.
+        code = normalize_code(carta)
+        if code:
+            try:
+                card = await asyncio.to_thread(self.cards.resolve_card, carta)
+            except Exception as exc:
+                await interaction.followup.send(
+                    f"❌ No pude buscar la carta: {exc}", ephemeral=True)
+                return
+            if card:
+                await self._enviar_carta(interaction, card)
+                return
+
+        # ---- búsqueda tokenizada: 'op01' o 'luffy' -> coincidencias ----
         try:
-            card = await asyncio.to_thread(self.cards.resolve_card, carta)
+            matches = await asyncio.to_thread(
+                self.cards.search_cards, carta, MAX_COINCIDENCIAS)
         except Exception as exc:
             await interaction.followup.send(
-                f"❌ No pude buscar la carta: {exc}", ephemeral=True)
+                f"❌ No pude buscar coincidencias: {exc}", ephemeral=True)
             return
 
-        if not card:
+        if not matches:
             await interaction.followup.send(
-                f"❌ No encontré ninguna carta con «{carta}». Revisa el código (p. ej. OP01-001) o el nombre.",
+                f"❌ No encontré ninguna carta con «{carta}». Revisa el código "
+                f"(p. ej. OP01-001), el nombre o prueba con /listado.",
                 ephemeral=True)
             return
 
-        # ---------- precios (deshabilitados por defecto; ver config.PRICES_ENABLED) ----------
-        precio: PriceResult | None = None
-        precio_error: str | None = None
-        if config.PRICES_ENABLED:
-            precio_error = self.precio_error
-            if self.prices is not None:
-                try:
-                    precio = await asyncio.to_thread(
-                        self.prices.get_prices, card.get("name") or carta, card.get("id"))
-                except Exception as exc:
-                    precio_error = str(exc)
+        if len(matches) == 1:
+            await self._enviar_carta(interaction, matches[0])
+            return
 
-        # ---------- embed ----------
+        # Varias coincidencias -> cuadrícula con imágenes + selector
+        total = len(matches)
+        aviso = ""
+        if total >= MAX_COINCIDENCIAS:
+            aviso = (f"\nMostrando las **{MAX_COINCIDENCIAS}** primeras. "
+                     f"Para más resultados usa `/listado` con filtros "
+                     f"(p. ej. `/listado set:{carta.upper()}`).")
+        vista = BuscarResultadosView(
+            self, matches, f"**{total} coincidencias** para «{carta}».{aviso}")
+        fichero = await vista.render_pagina(0)
+        msg = await interaction.followup.send(
+            content=vista.resumen_texto(), file=fichero, view=vista)
+        vista.message = msg
+
+    # ------------------------------------------------------------------
+
+    async def _precio_para(self, card: dict) -> tuple[PriceResult | None, str | None]:
+        """Consulta precios al proveedor configurado. Devuelve (precio, error)."""
+        if not config.PRICES_ENABLED or self.prices is None:
+            return None, None
+        try:
+            precio = await asyncio.to_thread(
+                self.prices.get_prices, card.get("name") or "", card.get("id"))
+            return precio, None
+        except Exception as exc:
+            return None, str(exc)
+
+    async def _embed_carta(self, card: dict, precio: PriceResult | None,
+                           precio_error: str | None) -> tuple[discord.Embed, list[discord.File], str | None]:
+        """Construye el embed de una carta (imagen + campos + precios)."""
         embed = discord.Embed(
             title=f"{card.get('name', '?')}",
             description=f"`{card.get('id', '?')}`",
@@ -79,6 +125,9 @@ class SearchCog(commands.Cog):
         embed.add_field(name="Categoría", value=card.get("category") or "—", inline=True)
         if card.get("color") is None and colors != "—":
             embed.add_field(name="Color", value=colors, inline=True)
+        tipos = ", ".join(card["types"]) if card.get("types") else None
+        if tipos:
+            embed.add_field(name="Tipo", value=tipos[:100], inline=True)
         if card.get("cost") is not None or card.get("power") is not None:
             embed.add_field(
                 name="Coste / Poder",
@@ -116,18 +165,28 @@ class SearchCog(commands.Cog):
             embed.add_field(name="Cardmarket", value=f"[Ver en Cardmarket]({link})", inline=False)
 
         # ---------- imagen ----------
-        archivos = []
+        archivos: list[discord.File] = []
         img_url = card.get("image_url")
         if img_url:
             try:
                 img = await asyncio.to_thread(_descargar_imagen, img_url)
-                if img:
-                    embed.set_image(url="attachment://carta.png")
-                    archivos.append(discord.File(img, filename="carta.png"))
             except Exception:
-                pass
+                img = None
+            if img:
+                embed.set_image(url="attachment://carta.png")
+                archivos.append(discord.File(img, filename="carta.png"))
+        return embed, archivos, link
 
-        await interaction.followup.send(embed=embed, files=archivos)
+    async def _enviar_carta(self, interaction: discord.Interaction, card: dict,
+                            editar: bool = False) -> None:
+        """Envía (o edita el mensaje actual con) la ficha completa de una carta."""
+        precio, precio_error = await self._precio_para(card)
+        embed, archivos, _ = await self._embed_carta(card, precio, precio_error)
+        if editar:
+            await interaction.response.edit_message(
+                content=None, embed=embed, attachments=archivos, view=None)
+        else:
+            await interaction.followup.send(embed=embed, files=archivos)
 
     # ------------------------------------------------------------------
 
@@ -173,6 +232,45 @@ class SearchCog(commands.Cog):
             embed.add_field(name="Cardmarket", value=f"[Ver en Cardmarket]({precio.link})",
                             inline=False)
         await interaction.followup.send(embed=embed)
+
+
+# ----------------------------- vista de resultados -----------------------------
+
+class BuscarResultadosView(GridView):
+    """Cuadrícula de coincidencias con imágenes + selector para abrir una ficha."""
+
+    def __init__(self, cog: SearchCog, cartas: list[dict], cabecera: str) -> None:
+        super().__init__(cartas, 0, "")
+        self.cog = cog
+        self.cabecera = cabecera
+        opciones = []
+        for c in cartas[:MAX_COINCIDENCIAS]:
+            cid = c.get("id") or "?"
+            nombre = (c.get("name") or "?")[:90]
+            desc = f"{cid} · {c.get('rarity') or '?'}"
+            opciones.append(discord.SelectOption(label=nombre, value=cid, description=desc[:95]))
+        self.select = discord.ui.Select(
+            placeholder=f"Elige una carta ({len(cartas)} coincidencias)",
+            options=opciones)
+        self.select.callback = self._on_select
+        self.add_item(self.select)
+
+    def resumen_texto(self) -> str:
+        return f"{self.cabecera}\n{super().resumen_texto()}"
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        cid = self.select.values[0]
+        card = None
+        try:
+            card = await asyncio.to_thread(self.cog.cards.resolve_card, cid)
+        except Exception:
+            card = None
+        if not card:
+            await interaction.response.edit_message(
+                content=f"❌ No pude recuperar la carta «{cid}».", embed=None,
+                attachments=[], view=None)
+            return
+        await self.cog._enviar_carta(interaction, card, editar=True)
 
 
 # ----------------------------- utilidades -----------------------------
