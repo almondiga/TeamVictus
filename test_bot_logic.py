@@ -270,6 +270,9 @@ _conn.executemany(
         ("EB01-001", 0, "Nami", "EB-01", "Common", "Character",
          _json.dumps(["Blue"]), 2, 3000, None,
          "https://en.onepiece-cardgame.com/images/cardlist/card/EB01-001.png"),
+        ("OP02-001", 0, "Edward.Newgate", "OP-02", "Rare", "Character",
+         _json.dumps(["Red"]), 5, 7000, _json.dumps(["Whitebeard Pirates"]),
+         "https://en.onepiece-cardgame.com/images/cardlist/card/OP02-001.png"),
     ])
 _conn.commit()
 _conn.close()
@@ -295,6 +298,33 @@ lst3 = cdl.list_cards(set_id="EB-01")
 check("local listado otro set", len(lst3) == 1 and lst3[0]["id"] == "EB01-001")
 lst4 = cdl.list_cards(name="nami")
 check("local listado por nombre (sin set)", len(lst4) == 1 and lst4[0]["id"] == "EB01-001")
+
+# --- tokenizado: search_cards ---
+t1 = cdl.search_cards("op01")
+check("token 'op01' -> coincidencias del set OP-01",
+      len(t1) >= 3 and all(c["id"].startswith("OP01") for c in t1))
+t2 = cdl.search_cards("luffy")
+check("token 'luffy' -> Monkey.D.Luffy (tolerante a puntos)",
+      any(c["id"] == "OP01-002" for c in t2))
+t3 = cdl.search_cards("OP01-00")
+check("token código parcial 'OP01-00'",
+      any(c["id"] == "OP01-001" for c in t3) and any(c["id"] == "OP01-001_p1" for c in t3))
+t4 = cdl.search_cards("")
+check("token vacío -> []", t4 == [])
+
+# --- filtro de tipo (arquetipos) ---
+tt1 = cdl.list_cards(tipo="supernovas")
+check("filtro tipo: 'supernovas' (case-insensitive)",
+      len(tt1) == 1 and tt1[0]["id"] == "OP01-001")
+tt2 = cdl.list_cards(tipo="whitebeard")
+check("filtro tipo: 'whitebeard'",
+      len(tt2) == 1 and tt2[0]["id"] == "OP02-001")
+tt3 = cdl.list_cards(tipo="straw")
+check("filtro tipo parcial: 'straw'",
+      any(c["id"] == "OP01-001" for c in tt3))
+tt4 = cdl.list_cards(set_id="OP-02", tipo="whitebeard", min_power=6000)
+check("filtro tipo combinado con set y poder",
+      len(tt4) == 1 and tt4[0]["id"] == "OP02-001")
 cdl.close()
 os.remove(db_local)
 

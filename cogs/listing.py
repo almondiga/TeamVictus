@@ -43,6 +43,7 @@ class ListadoCog(commands.Cog):
         color="Color de la carta",
         categoria="Leader, Character, Event, Stage, Don",
         rareza="Rareza",
+        tipo="Tipo / arquetipo (Supernovas, Straw Hat Crew, CP, Cipher Pol...)",
         numero="Número de carta (p. ej. 001, OP01-001)",
         poder_min="Poder mínimo",
         poder_max="Poder máximo",
@@ -61,6 +62,7 @@ class ListadoCog(commands.Cog):
                       color: app_commands.Choice[str] | None = None,
                       categoria: app_commands.Choice[str] | None = None,
                       rareza: app_commands.Choice[str] | None = None,
+                      tipo: str | None = None,
                       numero: str | None = None,
                       poder_min: int | None = None,
                       poder_max: int | None = None,
@@ -83,6 +85,7 @@ class ListadoCog(commands.Cog):
                 color=color.value if color else None,
                 category=categoria.value if categoria else None,
                 rarity=rareza.value if rareza else None,
+                tipo=tipo or None,
                 min_power=poder_min,
                 sort=orden.value if orden else "id",
                 order="asc" if ascendente else "desc",
@@ -111,7 +114,7 @@ class ListadoCog(commands.Cog):
             cartas = cartas[: config.MAX_RESULTS_LISTADO]
 
         view = GridView(cartas, 0, _resumen_filtros(set, nombre, color, categoria, rareza,
-                                                    numero, poder_min, poder_max))
+                                                    tipo, numero, poder_min, poder_max))
         await interaction.followup.send(
             content=view.resumen_texto(),
             file=await view.render_pagina(0),
@@ -134,7 +137,7 @@ def _normalizar_set(texto: str | None) -> str | None:
 
 def _resumen_filtros(*args) -> str:
     etiquetas = []
-    nombres = ["Set", "Nombre", "Color", "Categoría", "Rareza", "Número", "Poder ≥", "Poder ≤"]
+    nombres = ["Set", "Nombre", "Color", "Categoría", "Rareza", "Tipo", "Número", "Poder ≥", "Poder ≤"]
     for nombre, valor in zip(nombres, args):
         if valor:
             v = valor.value if hasattr(valor, "value") else valor

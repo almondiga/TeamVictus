@@ -104,11 +104,24 @@ class CardData:
         matches = self.search_by_name(text.strip())
         return matches[0] if matches else None
 
+    def search_cards(self, text: str, limit: int = 25) -> list[dict]:
+        """Búsqueda tokenizada: 'op01' o 'luffy' devuelven coincidencias parciales."""
+        code = normalize_code(text)
+        if code:
+            card = self.get_by_code(code)
+            if card:
+                return [card]
+        try:
+            return self.search_by_name(text.strip(), limit=limit)
+        except requests.HTTPError:
+            return []
+
     # ----------------------------- listado con filtros -----------------------------
 
     def list_cards(self, *, set_id: str | None = None, name: str | None = None,
                    color: str | None = None, category: str | None = None,
-                   rarity: str | None = None, min_power: int | None = None,
+                   rarity: str | None = None, tipo: str | None = None,
+                   min_power: int | None = None,
                    sort: str = "id", order: str = "asc",
                    page_size: int = 100) -> list[dict]:
         params: dict = {"sort": sort, "order": order, "page_size": page_size}
@@ -125,7 +138,12 @@ class CardData:
         if min_power is not None:
             params["min_power"] = min_power
         data = self._get("cards", params)
-        return [_clean(c) for c in data if isinstance(c, dict)]
+        cartas = [_clean(c) for c in data if isinstance(c, dict)]
+        if tipo:
+            t = tipo.lower()
+            cartas = [c for c in cartas
+                      if any(t in (x or "").lower() for x in (c.get("types") or []))]
+        return cartas
 
 
 class CardDataFallback:
@@ -160,6 +178,28 @@ class CardDataFallback:
             "_mkm_product": best,
         }
         return card
+
+    def search_cards(self, text: str, limit: int = 25) -> list[dict]:
+        products = self.mkm.find_products(text.strip(), exact=False, max_results=limit)
+        out = []
+        for p in products or []:
+            code = p.get("number") or ""
+            out.append({
+                "id": code or (p.get("enName") or ""),
+                "name": p.get("enName"),
+                "rarity": p.get("rarity"),
+                "category": None,
+                "colors": None,
+                "cost": None,
+                "power": None,
+                "counter": None,
+                "types": None,
+                "effect": None,
+                "image_url": p.get("image") or (official_image_url(code) if code else None),
+                "price": None,
+                "sets": [{"id": p.get("expansionName"), "label": p.get("expansionName")}],
+            })
+        return out
 
 
 class CardDataBerry:
@@ -242,11 +282,30 @@ class CardDataBerry:
         best = max(pool, key=clave)
         return self._normalizar(best)
 
+    def search_cards(self, text: str, limit: int = 25) -> list[dict]:
+        """Búsqueda tokenizada vía BerryWallet (código o nombre parcial)."""
+        q = (text or "").strip()
+        if not q:
+            return []
+        try:
+            items = self._buscar(q, limit=min(limit * 3, 200))
+        except Exception:
+            return []
+        cartas = [self._normalizar(i) for i in items if isinstance(i, dict)]
+        mejores: dict[str, dict] = {}
+        for c in cartas:
+            cid = c.get("id") or ""
+            viejo = mejores.get(cid)
+            if viejo is None or _mejor_variante(c, viejo):
+                mejores[cid] = c
+        return list(mejores.values())[:limit]
+
     # ----------------------------- listado con filtros -----------------------------
 
     def list_cards(self, *, set_id: str | None = None, name: str | None = None,
                    color: str | None = None, category: str | None = None,
-                   rarity: str | None = None, min_power: int | None = None,
+                   rarity: str | None = None, tipo: str | None = None,
+                   min_power: int | None = None,
                    sort: str = "id", order: str = "asc",
                    page_size: int = 100) -> list[dict]:
         q = name or (set_id.upper().replace("-", "") if set_id else "")
@@ -272,6 +331,10 @@ class CardDataBerry:
         if rarity:
             cartas = [c for c in cartas
                       if (c.get("rarity") or "").lower() == rarity.lower()]
+        if tipo:
+            t = tipo.lower()
+            cartas = [c for c in cartas
+                      if any(t in (x or "").lower() for x in (c.get("types") or []))]
         if min_power is not None:
             cartas = [c for c in cartas if (c.get("power") or 0) >= min_power]
         if name:
@@ -386,11 +449,29 @@ class CardDataLocal:
             (name, f"%{name}%", nl, f"%{nl}%")).fetchone()
         return self._fila_a_carta(row) if row else None
 
+    def search_cards(self, text: str, limit: int = 25) -> list[dict]:
+        """Búsqueda tokenizada por código o nombre: 'op01' o 'luffy' devuelven un
+        listado de coincidencias parciales (tolerante a puntos y espacios)."""
+        t = (text or "").strip()
+        if not t:
+            return []
+        nl = re.sub(r"[\s.]+", "", t.lower())
+        rows = self._execute(
+            """SELECT * FROM cards
+               WHERE id LIKE ? COLLATE NOCASE
+                  OR name LIKE ? COLLATE NOCASE
+                  OR replace(lower(name), '.', '') LIKE ?
+                  OR replace(lower(id), '.', '') LIKE ?
+               ORDER BY id ASC LIMIT ?""",
+            (f"%{t}%", f"%{t}%", f"%{nl}%", f"%{nl}%", limit)).fetchall()
+        return [self._fila_a_carta(r) for r in rows]
+
     # ----------------------------- listado con filtros -----------------------------
 
     def list_cards(self, *, set_id: str | None = None, name: str | None = None,
                    color: str | None = None, category: str | None = None,
-                   rarity: str | None = None, min_power: int | None = None,
+                   rarity: str | None = None, tipo: str | None = None,
+                   min_power: int | None = None,
                    sort: str = "id", order: str = "asc",
                    page_size: int = 100) -> list[dict]:
         cond, params = [], []
@@ -412,6 +493,10 @@ class CardDataLocal:
         if rarity:
             cond.append("rarity = ? COLLATE NOCASE")
             params.append(rarity)
+        if tipo:
+            # 'types' se guarda como JSON: ["Supernovas", "Straw Hat Crew"]
+            cond.append("replace(types, '\"', '') LIKE ? COLLATE NOCASE")
+            params.append(f"%{tipo}%")
         if min_power is not None:
             cond.append("power >= ?")
             params.append(min_power)
