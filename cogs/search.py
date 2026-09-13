@@ -28,6 +28,11 @@ from carddata import (CardData, CardDataFallback, build_card_data, normalize_cod
 from cogs.listing import GridView
 from prices import PriceResult, build_price_provider, URL_MKM_SEARCH
 
+try:
+    from arts import ArteMatcher
+except Exception:  # PIL/requests ausentes: se degrada sin mapa de artes
+    ArteMatcher = None  # type: ignore
+
 URL_MKM_SEARCH = URL_MKM_SEARCH
 
 MAX_COINCIDENCIAS = 25  # tope de coincidencias en la cuadrícula / selector
@@ -52,6 +57,32 @@ class SearchCog(commands.Cog):
             self.prices, self.precio_error = build_price_provider()
         else:
             self.prices, self.precio_error = None, "Precios deshabilitados (PRICES_ENABLED=0)"
+        self._artes = None  # ArteMatcher (perezoso): arte de cada variante por imagen
+
+    def _matcher_artes(self):
+        """Matcher de artes (imagen -> blueprint de CardTrader), si aplica."""
+        if getattr(self, "_artes", None) is None and ArteMatcher is not None:
+            ct = getattr(self.prices, "ct", None)
+            fn = getattr(self.cards, "variants_of", None)
+            if ct is not None and fn is not None:
+                try:
+                    self._artes = ArteMatcher(ct, self.cards)
+                except Exception:
+                    self._artes = None
+        return self._artes
+
+    async def _arte_de(self, card_id: str | None) -> dict | None:
+        """Arte resuelto por imagen para UNA variante: {blueprint_id, label} o None."""
+        matcher = self._matcher_artes()
+        if matcher is None or not card_id:
+            return None
+        try:
+            mapa = await asyncio.to_thread(matcher.mapa_de_carta, card_id)
+        except Exception:
+            return None
+        if not mapa:
+            return None
+        return mapa.get((card_id or "").upper())
 
     # ------------------------------------------------------------------
 
@@ -112,16 +143,26 @@ class SearchCog(commands.Cog):
 
     # ------------------------------------------------------------------
 
-    async def _precio_para(self, card: dict) -> tuple[PriceResult | None, str | None]:
-        """Consulta precios al proveedor configurado. Devuelve (precio, error)."""
+    async def _precio_para(self, card: dict) -> tuple[PriceResult | None, str | None, dict | None]:
+        """Consulta precios al proveedor configurado. Devuelve (precio, error, arte).
+
+        `arte` es el mapa resuelto por imagen (arts.py) de ESTA variante:
+        {'blueprint_id': int, 'label': str} — permite que cada arte cotice con su
+        precio real (p. ej. Manga Panel ≠ Wanted ≠ Red Manga en la misma carta).
+        """
         if not config.PRICES_ENABLED or self.prices is None:
-            return None, None
+            return None, None, None
+        art = None
+        try:
+            art = await self._arte_de(card.get("id"))
+        except Exception:
+            art = None
         try:
             precio = await asyncio.to_thread(
-                self.prices.get_prices, card.get("name") or "", card.get("id"))
-            return precio, None
+                self.prices.get_prices, card.get("name") or "", card.get("id"), art)
+            return precio, None, art
         except Exception as exc:
-            return None, str(exc)
+            return None, str(exc), art
 
     async def _embed_carta(self, card: dict, precio: PriceResult | None,
                            precio_error: str | None) -> tuple[discord.Embed, list[discord.File], str | None]:
@@ -199,7 +240,7 @@ class SearchCog(commands.Cog):
         Si la carta tiene variantes (Normal, Alternate Art, Reprint...), añade un
         paginador ◀ Variante ▶ para recorrerlas, reutilizando los mismos precios.
         """
-        precio, precio_error = await self._precio_para(card)
+        precio, precio_error, _ = await self._precio_para(card)
 
         vista = None
         fn = getattr(self.cards, "variants_of", None)
@@ -329,14 +370,14 @@ class FichaView(discord.ui.View):
         self.cog = cog
         self.variantes = variantes
         self.indice = 0
-        self._precios_cache: dict[int, tuple[PriceResult | None, str | None]] = {}
+        self._precios_cache: dict[int, tuple[PriceResult | None, str | None, dict | None]] = {}
         self._actualizar_botones()
 
     def _actualizar_botones(self) -> None:
         self.prev.disabled = self.indice <= 0
         self.next.disabled = self.indice >= len(self.variantes) - 1
 
-    async def _precio_indice(self, indice: int) -> tuple[PriceResult | None, str | None]:
+    async def _precio_indice(self, indice: int) -> tuple[PriceResult | None, str | None, dict | None]:
         """Precios DE ESA VARIANTE (cada variante tiene su propio precio en los
         proveedores: Normal, Alternate Art/Paralela y Reprint cotizan distinto)."""
         if indice not in self._precios_cache:
@@ -346,9 +387,13 @@ class FichaView(discord.ui.View):
 
     async def _embed_indice(self, indice: int) -> tuple[discord.Embed, list[discord.File]]:
         card = self.variantes[indice]
-        precio, precio_error = await self._precio_indice(indice)
+        precio, precio_error, arte = await self._precio_indice(indice)
         embed, archivos, _ = await self.cog._embed_carta(card, precio, precio_error)
         etiqueta = variante_nombre(card, self.variantes)
+        # si el arte está resuelto por imagen, muestra el nombre real del arte
+        # (p. ej. 'Manga Panel Alternate Art') en lugar de 'Alternate Art 1/2'
+        if arte and (arte.get("label") or ""):
+            etiqueta = arte["label"]
         embed.set_footer(
             text=f"Variante {indice + 1}/{len(self.variantes)} · {etiqueta}")
         await self._anotar_cotizacion_compartida(indice, precio, embed)
@@ -375,14 +420,14 @@ class FichaView(discord.ui.View):
                 return
             mismo = 1
             for i in hermanos:
-                p, _ = await self._precio_indice(i)
+                p, _, _ = await self._precio_indice(i)
                 if p and p.trend == precio.trend:
                     mismo += 1
             if mismo == len(hermanos) + 1 and mismo >= 2:
                 viejo = embed.footer.text or ""
                 embed.set_footer(
                     text=f"{viejo}\n⚠️ Las {mismo} variantes «{tipo}» comparten "
-                         "cotización (no se distinguen los artes individuales).")
+                         "cotización (mismo arte o artes sin distinguir).")
         except Exception:
             pass
 

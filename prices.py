@@ -165,6 +165,45 @@ def _elegir_paralela(items: list[dict], card_code: str | None, card_name: str) -
     return _elegir_con_precios(items, card_code, card_name)
 
 
+def _elegir_por_arte(items: list[dict], card_code: str | None, card_name: str,
+                     label: str | None) -> dict | None:
+    """Elige el item de BerryWallet cuyo arte coincide con la etiqueta resuelta
+    por imagen (p. ej. 'Manga Panel Alternate Art' -> 'Parallel'; 'Red Manga
+    Panel...' -> 'Red Super Alternate Art'; 'Wanted...' -> 'Wanted Poster')."""
+    if not items:
+        return None
+    lab = (label or "").lower()
+    # palabras que distinguen el arte en los nombres de BerryWallet
+    clave = [p for p in re.split(r"[^a-z0-9]+", lab)
+             if p in ("wanted", "manga", "red", "parallel", "super")]
+
+    def marca(it: dict) -> int:
+        nombre = (it.get("name") or "").lower()
+        score = 0
+        for p in clave:
+            if p in nombre:
+                score += 3
+        if "(parallel)" in nombre and "manga" not in clave and "parallel" not in clave:
+            score -= 1
+        if "red" in clave and "red" not in nombre:
+            score -= 2
+        return score
+
+    con_precios = [it for it in items
+                   if marca(it) > 0 and (it.get("cardmarket") or {}).get("prices")]
+    if con_precios:
+        con_precios.sort(key=marca, reverse=True)
+        return con_precios[0]
+    # etiqueta genérica ('Alternate Art' a secas): arte AA con precios
+    if "manga" in clave:
+        par = [it for it in items
+               if "(parallel)" in (it.get("name") or "").lower()
+               and (it.get("cardmarket") or {}).get("prices")]
+        if par:
+            return par[0]
+    return _elegir_paralela(items, card_code, card_name)
+
+
 class _TTLCache:
     def __init__(self, ttl: int) -> None:
         self.ttl = ttl
@@ -200,11 +239,13 @@ class BerryWalletProvider(PriceProvider):
         self.session = session or requests.Session()
         self._cache = _TTLCache(1800)  # 30 min
 
-    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
+    def get_prices(self, card_name: str, card_code: str | None,
+                   art: dict | None = None) -> PriceResult | None:
         base = _base_codigo(card_code)
         sufijo = _sufijo_variante(card_code)
         q = base or card_name
-        cache_key = f"bw:{q}:{sufijo}"
+        label = (art or {}).get("label") or ""
+        cache_key = f"bw:{q}:{sufijo}:{label}"
         hit = self._cache.get(cache_key)
         if hit is not None:
             return hit
@@ -217,7 +258,14 @@ class BerryWalletProvider(PriceProvider):
         resp.raise_for_status()
         data = resp.json()
         items = data.get("data") or data.get("results") or []
-        if sufijo == "p":
+        if art:
+            # arte resuelto por imagen (arts.py): cada arte cotiza distinto
+            if label:
+                best = _elegir_por_arte(items, base, card_name, label)
+            else:
+                # la variante ES el arte base (p. ej. reprint idéntico): precio Normal
+                best = _elegir_con_precios(items, base, card_name)
+        elif sufijo == "p":
             # variante paralela / Alternate Art: busca su propio precio
             best = _elegir_paralela(items, base, card_name)
         else:
@@ -251,7 +299,8 @@ class RapidApiCMProvider(PriceProvider):
         self.session = session or requests.Session()
         self._cache = _TTLCache(3600)  # 1 h
 
-    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
+    def get_prices(self, card_name: str, card_code: str | None,
+                   art: dict | None = None) -> PriceResult | None:
         q = _base_codigo(card_code) or card_name
         cache_key = f"rapi:{q}"
         hit = self._cache.get(cache_key)
@@ -353,7 +402,8 @@ class CardTraderProvider(PriceProvider):
         self._expansiones.set(cache_key, encontrado)
         return encontrado
 
-    def _blueprint_de(self, expansion_id: int, card_name: str, card_code: str) -> dict | None:
+    def _blueprints_de(self, expansion_id: int) -> list[dict]:
+        """Lista completa de blueprints de una expansión (caché 24 h)."""
         cache_key = f"bp:{expansion_id}"
         hit = self._blueprints.get(cache_key)
         if hit is None:
@@ -365,6 +415,10 @@ class CardTraderProvider(PriceProvider):
             lista = r.json() or []
             self._blueprints.set(cache_key, lista)
             hit = lista
+        return hit
+
+    def _blueprint_de(self, expansion_id: int, card_name: str, card_code: str) -> dict | None:
+        hit = self._blueprints_de(expansion_id)
         nombre = (card_name or "").strip().upper()
         codigo = (card_code or "").strip().upper()
         codigo_norm = _norm_set(codigo)
@@ -411,27 +465,32 @@ class CardTraderProvider(PriceProvider):
 
     # -- interfaz ----------------------------------------------------------
 
-    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
+    def get_prices(self, card_name: str, card_code: str | None,
+                   art: dict | None = None) -> PriceResult | None:
         if not card_code:
             return PriceResult(provider=self.name,
                                nota="CardTrader necesita el código de carta (p. ej. OP01-001)")
         try:
-            base = _base_codigo(card_code)               # OP01-001_p1 -> OP01-001
-            sufijo = _sufijo_variante(card_code)          # 'p' / 'r' / ''
-            set_code = base.rsplit("-", 1)[0]             # OP01-001 -> OP01
-            expansion = self._expansion_de(set_code)
-            if not expansion:
-                return PriceResult(provider=self.name,
-                                   nota=f"Set «{set_code}» no encontrado en CardTrader")
-            # las Alternate Art tienen blueprint propio con collector base+'A'
-            bp = None
-            if sufijo == "p":
-                bp = self._blueprint_de(expansion.get("id"), card_name, base + "A")
-            if bp is None:
-                bp = self._blueprint_de(expansion.get("id"), card_name, base)
-            if not bp:
-                return PriceResult(provider=self.name,
-                                   nota=f"«{card_name} ({card_code})» no encontrado en CardTrader")
+            if art and art.get("blueprint_id"):
+                # arte resuelto por imagen (arts.py): blueprint exacto de esa variante
+                bp = {"id": art["blueprint_id"]}
+            else:
+                base = _base_codigo(card_code)               # OP01-001_p1 -> OP01-001
+                sufijo = _sufijo_variante(card_code)          # 'p' / 'r' / ''
+                set_code = base.rsplit("-", 1)[0]             # OP01-001 -> OP01
+                expansion = self._expansion_de(set_code)
+                if not expansion:
+                    return PriceResult(provider=self.name,
+                                       nota=f"Set «{set_code}» no encontrado en CardTrader")
+                # las Alternate Art tienen blueprint propio con collector base+'A'
+                bp = None
+                if sufijo == "p":
+                    bp = self._blueprint_de(expansion.get("id"), card_name, base + "A")
+                if bp is None:
+                    bp = self._blueprint_de(expansion.get("id"), card_name, base)
+                if not bp:
+                    return PriceResult(provider=self.name,
+                                       nota=f"«{card_name} ({card_code})» no encontrado en CardTrader")
             ofertas = self._ofertas(bp.get("id"))
         except Exception as exc:
             return PriceResult(provider=self.name, nota=f"Error consultando CardTrader: {exc}")
@@ -476,9 +535,10 @@ class HybridProvider(PriceProvider):
         self.bw = bw
         self.ct = ct
 
-    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
-        bw = self.bw.get_prices(card_name, card_code)
-        ct = self.ct.get_prices(card_name, card_code)
+    def get_prices(self, card_name: str, card_code: str | None,
+                   art: dict | None = None) -> PriceResult | None:
+        bw = self.bw.get_prices(card_name, card_code, art)
+        ct = self.ct.get_prices(card_name, card_code, art)
         if bw and (bw.trend is not None or bw.avg is not None or bw.low is not None):
             nota = "EUR: Cardmarket vía BerryWallet"
             if ct and ct.es_disponible:
@@ -506,7 +566,8 @@ class CardmarketOfficialProvider(PriceProvider):
         from cardmarket import CardmarketClient
         self.mkm = CardmarketClient()
 
-    def get_prices(self, card_name: str, card_code: str | None) -> PriceResult | None:
+    def get_prices(self, card_name: str, card_code: str | None,
+                   art: dict | None = None) -> PriceResult | None:
         products = self.mkm.find_products(card_name)
         best = self.mkm.best_product(products, card_name, card_code)
         if not best:

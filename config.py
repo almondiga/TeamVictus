@@ -29,6 +29,11 @@ OPTCG_API_KEY = os.getenv("OPTCG_API_KEY", "")
 # antes que optcg-api/BerryWallet para /buscar y /listado (catálogo completo).
 LOCAL_DB_PATH = os.getenv("LOCAL_DB_PATH", "optcg_cards.db")
 
+# --- Mapa de artes de variantes (imagen -> blueprint de CardTrader) ---
+# Lo genera arts.py la primera vez que se abre una ficha con variantes; se reutiliza
+# para mostrar el precio de CADA arte (no el mismo para todas las Alternate Art).
+ARTS_DB_PATH = os.getenv("ARTS_DB_PATH", "variante_art.db")
+
 # --- Precios de Cardmarket ---
 # La API oficial de Cardmarket está cerrada a nuevas altas, por eso los precios se
 # obtienen de proveedores alternativos (ver prices.py).

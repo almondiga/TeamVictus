@@ -228,6 +228,37 @@ res_maa = prov_maa.get_prices("Monkey.D.Luffy", "OP13-118_p1")
 check("variante AA con varios artes -> Super Alternate Art",
       res_maa and res_maa.trend == 3384.02, getattr(res_maa, "trend", None))
 
+# _elegir_por_arte: cada arte resuelto por imagen (arts.py) elige SU listado
+payload_op13_artes = {"data": [
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118)", "sub_type_name": "Foil",
+     "cardmarket": {"prices": {"trend": 11.08}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Parallel)",
+     "sub_type_name": "Foil", "cardmarket": {"prices": {"trend": 82.15}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Wanted Poster)",
+     "sub_type_name": "Foil", "cardmarket": {"prices": {"trend": 300.01}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Super Alternate Art)",
+     "sub_type_name": "Foil", "cardmarket": {"prices": {"trend": 3384.02}}},
+    {"card_number": "OP13-118", "name": "Monkey.D.Luffy (118) (Red Super Alternate Art)",
+     "sub_type_name": "Foil", "cardmarket": {"prices": {"trend": 23227.76}}},
+]}
+prov_op13 = prices.BerryWalletProvider("clave_test", session=FakeSession(payload_op13_artes))
+def _trend_op13(label):
+    r = prov_op13.get_prices("Monkey.D.Luffy", "OP13-118_p1", {"label": label})
+    return getattr(r, "trend", None)
+check("arte 'Alternate Art' -> Super Alternate Art",
+      _trend_op13("Alternate Art") == 3384.02, _trend_op13("Alternate Art"))
+check("arte 'Manga Panel Alternate Art' -> Parallel",
+      _trend_op13("Manga Panel Alternate Art") == 82.15,
+      _trend_op13("Manga Panel Alternate Art"))
+check("arte 'Red Manga Panel Alternate Art' -> Red Super",
+      _trend_op13("Red Manga Panel Alternate Art") == 23227.76,
+      _trend_op13("Red Manga Panel Alternate Art"))
+check("arte 'Wanted Alternate Art' -> Wanted Poster",
+      _trend_op13("Wanted Alternate Art") == 300.01,
+      _trend_op13("Wanted Alternate Art"))
+check("arte base '' -> cae a Normal",
+      _trend_op13("") == 11.08, _trend_op13(""))
+
 # --- CardTrader: comparativa España (mercado propio, gratis sin tarjeta) ---
 class FakeRouteSession:
     def __init__(self, rutas):
